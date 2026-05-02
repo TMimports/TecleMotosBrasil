@@ -139,3 +139,7 @@ database.sqlite
 # Uploads
 uploads/*
 !uploads/.gitkeep
+# Claude/local files
+.claude/
+.config/
+.local/
