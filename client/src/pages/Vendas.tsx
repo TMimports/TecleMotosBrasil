@@ -38,6 +38,10 @@ interface Venda {
   confirmadaFinanceiro: boolean;
   deletedAt: string | null;
   createdAt: string;
+  itens?: {
+    produto?: { nome: string; sku?: string };
+    unidadeFisica?: { chassi?: string; codigoMotor?: string };
+  }[];
 }
 
 interface Cliente {
@@ -63,6 +67,7 @@ interface ItemProduto {
   quantidade: number;
   preco: number;
   desconto: string;
+  descontoValor: string;
   tipo?: string;
   chassi?: string;
   motor?: string;
@@ -76,6 +81,7 @@ interface ItemMoto {
   quantidade: number;
   preco: number;
   desconto: string;
+  descontoValor: string;
   chassi: string;
   motor: string;
   displayName: string;
@@ -118,6 +124,7 @@ export function Vendas() {
   const [showQuickCliente, setShowQuickCliente] = useState(false);
   const [quickCliente, setQuickCliente] = useState({ nome: '', cpfCnpj: '', telefone: '' });
   const [quickClienteLoading, setQuickClienteLoading] = useState(false);
+  const [busca, setBusca] = useState('');
 
   const [form, setForm] = useState({
     clienteId: '',
@@ -189,7 +196,7 @@ export function Vendas() {
   }, [form.lojaId]);
 
   const adicionarItem = () => {
-    setItensSelecionados([...itensSelecionados, { produtoId: '', quantidade: 1, preco: 0, desconto: '0', tipo: '', chassi: '', motor: '' }]);
+    setItensSelecionados([...itensSelecionados, { produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', tipo: '', chassi: '', motor: '' }]);
   };
 
   const removerItem = (index: number) => {
@@ -201,13 +208,27 @@ export function Vendas() {
     if (field === 'produtoId') {
       const produto = produtos.find(p => p.id === parseInt(value));
       if (produto && produto.estoque <= 0 && form.tipo === 'VENDA') return;
-      novos[index] = { ...novos[index], produtoId: value, preco: produto?.preco || 0, tipo: produto?.tipo || '' };
+      novos[index] = { ...novos[index], produtoId: value, preco: produto?.preco || 0, tipo: produto?.tipo || '', desconto: '0', descontoValor: '0' };
     } else if (field === 'quantidade') {
       const produto = produtos.find(p => p.id === parseInt(novos[index].produtoId));
       if (produto && form.tipo === 'VENDA' && produto.tipo !== 'MOTO') {
         value = Math.min(value, produto.estoque);
       }
-      novos[index] = { ...novos[index], [field]: Math.max(1, value) };
+      const qty = Math.max(1, value);
+      const sub = novos[index].preco * qty;
+      const pct = parseFloat(novos[index].desconto) || 0;
+      const descontoValor = String(Math.round(sub * pct / 100 * 100) / 100);
+      novos[index] = { ...novos[index], quantidade: qty, descontoValor };
+    } else if (field === 'desconto') {
+      const pct = parseFloat(value) || 0;
+      const sub = novos[index].preco * novos[index].quantidade;
+      const descontoValor = String(Math.round(sub * pct / 100 * 100) / 100);
+      novos[index] = { ...novos[index], desconto: value, descontoValor };
+    } else if (field === 'descontoValor') {
+      const val = parseFloat(value) || 0;
+      const sub = novos[index].preco * novos[index].quantidade;
+      const pct = sub > 0 ? String(Math.round(val / sub * 10000) / 100) : '0';
+      novos[index] = { ...novos[index], descontoValor: value, desconto: pct };
     } else {
       novos[index] = { ...novos[index], [field]: value };
     }
@@ -215,7 +236,7 @@ export function Vendas() {
   };
 
   const adicionarMoto = () => {
-    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', chassi: '', motor: '', displayName: '' }]);
+    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', displayName: '' }]);
   };
 
   const removerMoto = (index: number) => {
@@ -227,11 +248,14 @@ export function Vendas() {
     if (field === 'produtoId') {
       const produto = produtos.find(p => p.id === parseInt(value));
       if (produto) {
-        const unidade = unidadesDisponiveis.find(u => u.produtoId === produto.id);
+        const unidadesDoModelo = unidadesDisponiveis.filter(u => u.produtoId === produto.id);
+        const unidade = unidadesDoModelo[0];
         novas[index] = {
           ...novas[index],
           produtoId: value,
           preco: produto.preco,
+          desconto: '0',
+          descontoValor: '0',
           unidadeId: unidade ? String(unidade.id) : '',
           chassi: unidade?.chassi || '',
           motor: unidade?.codigoMotor || '',
@@ -250,6 +274,16 @@ export function Vendas() {
       } else {
         novas[index] = { ...novas[index], unidadeId: '', chassi: '', motor: '' };
       }
+    } else if (field === 'desconto') {
+      const pct = parseFloat(value) || 0;
+      const sub = novas[index].preco * novas[index].quantidade;
+      const descontoValor = String(Math.round(sub * pct / 100 * 100) / 100);
+      novas[index] = { ...novas[index], desconto: value, descontoValor };
+    } else if (field === 'descontoValor') {
+      const val = parseFloat(value) || 0;
+      const sub = novas[index].preco * novas[index].quantidade;
+      const pct = sub > 0 ? String(Math.round(val / sub * 10000) / 100) : '0';
+      novas[index] = { ...novas[index], descontoValor: value, desconto: pct };
     } else {
       novas[index] = { ...novas[index], [field]: value };
     }
@@ -265,19 +299,15 @@ export function Vendas() {
   const calcularTotal = () => {
     const totalPecas = itensSelecionados.reduce((acc, item) => {
       const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
+      const descontoR = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+      return acc + Math.round((sub - descontoR) * 100) / 100;
     }, 0);
     const totalMotos = motosSelecionadas.reduce((acc, item) => {
       const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
+      const descontoR = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+      return acc + Math.round((sub - descontoR) * 100) / 100;
     }, 0);
-    const total = totalPecas + totalMotos;
-    if (total % 1 !== 0) {
-      return Math.ceil(total);
-    }
-    return total;
+    return Math.round((totalPecas + totalMotos) * 100) / 100;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -403,7 +433,7 @@ export function Vendas() {
 
   const handlePrint = () => {
     if (!printRef.current) return;
-    
+
     const printContent = printRef.current.innerHTML;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -472,6 +502,21 @@ export function Vendas() {
     }
   };
 
+  const vendasFiltradas = vendas.filter(v => {
+    if (!busca.trim()) return true;
+    const q = busca.toLowerCase().trim();
+    if (String(v.id).includes(q)) return true;
+    if (v.cliente?.nome?.toLowerCase().includes(q)) return true;
+    if (v.vendedor?.nome?.toLowerCase().includes(q)) return true;
+    for (const item of (v.itens || [])) {
+      if (item.produto?.nome?.toLowerCase().includes(q)) return true;
+      if (item.produto?.sku?.toLowerCase().includes(q)) return true;
+      if (item.unidadeFisica?.chassi?.toLowerCase().includes(q)) return true;
+      if (item.unidadeFisica?.codigoMotor?.toLowerCase().includes(q)) return true;
+    }
+    return false;
+  });
+
   if (loading) {
     return <div className="flex items-center justify-center h-64">Carregando...</div>;
   }
@@ -483,13 +528,35 @@ export function Vendas() {
         <button onClick={() => setModalOpen(true)} className="btn btn-primary">+ Nova Venda</button>
       </div>
 
-      {vendas.length === 0 ? (
+      {/* Busca avançada */}
+      <div className="mb-4">
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">🔍</span>
+          <input
+            type="text"
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            placeholder="Buscar por cliente, vendedor, ID, chassi, motor, produto..."
+            className="input pl-9 w-full"
+          />
+          {busca && (
+            <button onClick={() => setBusca('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white text-sm">
+              ✕
+            </button>
+          )}
+        </div>
+        {busca && (
+          <p className="text-xs text-gray-500 mt-1">{vendasFiltradas.length} resultado{vendasFiltradas.length !== 1 ? 's' : ''} encontrado{vendasFiltradas.length !== 1 ? 's' : ''}</p>
+        )}
+      </div>
+
+      {vendasFiltradas.length === 0 ? (
         <div className="card p-8 text-center text-gray-500">
-          Nenhuma venda encontrada
+          {busca ? 'Nenhuma venda encontrada para a busca' : 'Nenhuma venda encontrada'}
         </div>
       ) : (
         <div className="space-y-3">
-          {vendas.map(venda => (
+          {vendasFiltradas.map(venda => (
             <div key={venda.id} className="card">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-3">
@@ -622,6 +689,7 @@ export function Vendas() {
                   const unidadesDoModelo = item.produtoId
                     ? unidadesDisponiveis.filter(u => u.produtoId === parseInt(item.produtoId))
                     : [];
+                  const semUnidades = item.produtoId && unidadesDoModelo.length === 0;
                   return (
                   <div key={index} className="p-3 bg-zinc-800 rounded-lg">
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
@@ -631,16 +699,19 @@ export function Vendas() {
                         className="flex-1"
                         placeholder="Selecione uma moto..."
                         options={produtos.filter(p => p.tipo === 'MOTO').map(p => {
-                          const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : ` [${p.estoque} un]`;
+                          const unidadesMoto = unidadesDisponiveis.filter(u => u.produtoId === p.id);
+                          const semEstoque = p.estoque <= 0 && form.tipo === 'VENDA';
+                          const semUn = unidadesMoto.length === 0;
+                          const tag = semEstoque ? ' [Sem estoque]' : semUn ? ' [Sem unid. fisica]' : ` [${unidadesMoto.length} un]`;
                           return {
                             value: String(p.id),
-                            label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}`,
-                            disabled: p.estoque <= 0 && form.tipo === 'VENDA'
+                            label: `${p.nome}${tag} - R$ ${Number(p.preco).toFixed(2)}`,
+                            disabled: (semEstoque || semUn) && form.tipo === 'VENDA'
                           };
                         })}
                       />
                       <div className="flex gap-2 items-center">
-                        <div className="relative w-28">
+                        <div className="relative w-24">
                           <input
                             type="number"
                             step="0.1"
@@ -648,11 +719,26 @@ export function Vendas() {
                             max="100"
                             value={item.desconto}
                             onChange={(e) => atualizarMoto(index, 'desconto', e.target.value)}
-                            className="input text-sm pr-8 text-yellow-400"
+                            className="input text-sm pr-7 text-yellow-400"
                             disabled={isCartao}
                             placeholder="0"
+                            title="Desconto em %"
                           />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">%</span>
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+                        </div>
+                        <div className="relative w-28">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.descontoValor}
+                            onChange={(e) => atualizarMoto(index, 'descontoValor', e.target.value)}
+                            className="input text-sm pl-8 text-yellow-400"
+                            disabled={isCartao}
+                            placeholder="0"
+                            title="Desconto em reais"
+                          />
                         </div>
                         <div className="relative w-32">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">R$</span>
@@ -671,50 +757,56 @@ export function Vendas() {
                       </div>
                     </div>
                     {item.produtoId && !isCartao && (
-                      <p className="text-xs text-gray-500 mt-1 ml-1">Max desconto moto: {configDescontos.descontoMaxMoto}% (Gerentes: {configDescontos.descontoMaxMoto * 2}%)</p>
+                      <p className="text-xs text-gray-500 mt-1 ml-1">Max desconto moto: {configDescontos.descontoMaxMoto}% (Gerentes: {configDescontos.descontoMaxMoto * 2}%) — informe % ou R$</p>
                     )}
                     {item.produtoId && (
                       <>
-                        {unidadesDoModelo.length > 0 && (
+                        {semUnidades ? (
+                          <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-600/40 rounded text-xs text-yellow-400">
+                            Nenhuma unidade fisica cadastrada para este modelo. Cadastre no modulo de Estoque antes de vender.
+                          </div>
+                        ) : unidadesDoModelo.length > 0 && (
                           <div className="mt-3">
+                            <label className="text-xs text-gray-400 block mb-1">Selecione a unidade do estoque *</label>
                             <CustomSelect
                               value={item.unidadeId}
                               onChange={(val) => atualizarMoto(index, 'unidadeId', val)}
-                              placeholder="Selecione unidade fisica (opcional)..."
-                              options={[
-                                { value: '', label: 'Preencher manualmente' },
-                                ...unidadesDoModelo.map(u => ({
-                                  value: String(u.id),
-                                  label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
-                                }))
-                              ]}
+                              placeholder="Selecione a unidade fisica..."
+                              options={unidadesDoModelo.map(u => ({
+                                value: String(u.id),
+                                label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
+                              }))}
                             />
                           </div>
                         )}
-                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-xs text-gray-400">Numero do Chassi *</label>
-                            <input
-                              type="text"
-                              value={item.chassi || ''}
-                              onChange={(e) => atualizarMoto(index, 'chassi', e.target.value)}
-                              className="input"
-                              placeholder="Ex: 9C6KE0810PR000000"
-                              required
-                            />
+                        {!semUnidades && (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-gray-400">Numero do Chassi *</label>
+                              <input
+                                type="text"
+                                value={item.chassi || ''}
+                                onChange={(e) => !item.unidadeId && atualizarMoto(index, 'chassi', e.target.value)}
+                                readOnly={!!item.unidadeId}
+                                className={`input ${item.unidadeId ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                placeholder="Selecione uma unidade acima"
+                                required
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-400">Numero do Motor *</label>
+                              <input
+                                type="text"
+                                value={item.motor || ''}
+                                onChange={(e) => !item.unidadeId && atualizarMoto(index, 'motor', e.target.value)}
+                                readOnly={!!item.unidadeId}
+                                className={`input ${item.unidadeId ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                placeholder="Selecione uma unidade acima"
+                                required
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Numero do Motor *</label>
-                            <input
-                              type="text"
-                              value={item.motor || ''}
-                              onChange={(e) => atualizarMoto(index, 'motor', e.target.value)}
-                              className="input"
-                              placeholder="Ex: E3K6E0000000"
-                              required
-                            />
-                          </div>
-                        </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -739,61 +831,79 @@ export function Vendas() {
                   const produtoAtual = produtos.find(p => p.id === parseInt(item.produtoId));
                   const maxQtd = produtoAtual && form.tipo === 'VENDA' ? produtoAtual.estoque : 9999;
                   return (
-                  <div key={index} className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                    <CustomSelect
-                      value={item.produtoId}
-                      onChange={(val) => atualizarItem(index, 'produtoId', val)}
-                      className="flex-1"
-                      placeholder="Selecione uma peca..."
-                      options={produtos.filter(p => p.tipo !== 'MOTO').map(p => {
-                        const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : p.estoque <= 3 ? ` [Baixo: ${p.estoque}]` : ` [${p.estoque} un]`;
-                        return {
-                          value: String(p.id),
-                          label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}`,
-                          disabled: p.estoque <= 0 && form.tipo === 'VENDA'
-                        };
-                      })}
-                    />
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="number"
-                        min="1"
-                        max={maxQtd}
-                        value={item.quantidade}
-                        onChange={(e) => atualizarItem(index, 'quantidade', parseInt(e.target.value) || 1)}
-                        className="input w-16"
+                  <div key={index} className="flex flex-col gap-2">
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                      <CustomSelect
+                        value={item.produtoId}
+                        onChange={(val) => atualizarItem(index, 'produtoId', val)}
+                        className="flex-1"
+                        placeholder="Selecione uma peca..."
+                        options={produtos.filter(p => p.tipo !== 'MOTO').map(p => {
+                          const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : p.estoque <= 3 ? ` [Baixo: ${p.estoque}]` : ` [${p.estoque} un]`;
+                          return {
+                            value: String(p.id),
+                            label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}`,
+                            disabled: p.estoque <= 0 && form.tipo === 'VENDA'
+                          };
+                        })}
                       />
-                      <div className="relative w-28">
+                      <div className="flex gap-2 items-center flex-wrap">
                         <input
                           type="number"
-                          step="0.1"
-                          min="0"
-                          max="100"
-                          value={item.desconto}
-                          onChange={(e) => atualizarItem(index, 'desconto', e.target.value)}
-                          className="input text-sm pr-8 text-yellow-400"
-                          disabled={isCartao}
-                          placeholder="0"
+                          min="1"
+                          max={maxQtd}
+                          value={item.quantidade}
+                          onChange={(e) => atualizarItem(index, 'quantidade', parseInt(e.target.value) || 1)}
+                          className="input w-16"
+                          title="Quantidade"
                         />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-sm">%</span>
+                        <div className="relative w-24">
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="100"
+                            value={item.desconto}
+                            onChange={(e) => atualizarItem(index, 'desconto', e.target.value)}
+                            className="input text-sm pr-7 text-yellow-400"
+                            disabled={isCartao}
+                            placeholder="0"
+                            title="Desconto em %"
+                          />
+                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">%</span>
+                        </div>
+                        <div className="relative w-28">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.descontoValor}
+                            onChange={(e) => atualizarItem(index, 'descontoValor', e.target.value)}
+                            className="input text-sm pl-8 text-yellow-400"
+                            disabled={isCartao}
+                            placeholder="0"
+                            title="Desconto em reais"
+                          />
+                        </div>
+                        <div className="relative w-28">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={item.preco}
+                            onChange={(e) => atualizarItem(index, 'preco', parseFloat(e.target.value) || 0)}
+                            className="input text-sm pl-8 text-green-400"
+                          />
+                        </div>
+                        <button type="button" onClick={() => removerItem(index)} className="text-red-500 hover:text-red-400">
+                          X
+                        </button>
                       </div>
-                      <div className="relative w-28">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">R$</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={item.preco}
-                          onChange={(e) => atualizarItem(index, 'preco', parseFloat(e.target.value) || 0)}
-                          className="input text-sm pl-8 text-green-400"
-                        />
-                      </div>
-                      <button type="button" onClick={() => removerItem(index)} className="text-red-500 hover:text-red-400">
-                        X
-                      </button>
                     </div>
                     {item.produtoId && !isCartao && (
-                      <p className="text-xs text-gray-500 mt-1">Max desconto peca: {configDescontos.descontoMaxPeca}% (Gerentes: {configDescontos.descontoMaxPeca * 2}%)</p>
+                      <p className="text-xs text-gray-500">Max desconto peca: {configDescontos.descontoMaxPeca}% (Gerentes: {configDescontos.descontoMaxPeca * 2}%) — informe % ou R$</p>
                     )}
                   </div>
                   );
@@ -838,27 +948,26 @@ export function Vendas() {
 
           <div className="border-t border-zinc-700 pt-4 space-y-3">
             <h4 className="text-sm font-medium text-gray-400">Resumo de Precos</h4>
-            
+
             {(motosSelecionadas.filter(m => m.produtoId).length > 0 || itensSelecionados.filter(i => i.produtoId).length > 0) && (
               <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                 {motosSelecionadas.filter(m => m.produtoId).map((item, idx) => {
                   const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const descontoR = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+                  const finalItem = Math.round((subtotal - descontoR) * 100) / 100;
                   return (
                     <div key={`m-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{item.displayName || 'Moto'}</span>
                         <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {descontoR > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto ({parseFloat(item.desconto).toFixed(2)}%):</span>
+                          <span className="text-red-400">- R$ {descontoR.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {descontoR > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
                           <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
@@ -871,22 +980,21 @@ export function Vendas() {
                   const produto = produtos.find(p => p.id === parseInt(item.produtoId));
                   const nomeExibicao = produto?.nome || 'Peca';
                   const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const descontoR = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+                  const finalItem = Math.round((subtotal - descontoR) * 100) / 100;
                   return (
                     <div key={`p-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{nomeExibicao} (x{item.quantidade})</span>
                         <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {descontoR > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto ({parseFloat(item.desconto).toFixed(2)}%):</span>
+                          <span className="text-red-400">- R$ {descontoR.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {descontoR > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
                           <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
@@ -898,10 +1006,13 @@ export function Vendas() {
               </div>
             )}
 
-            <div className="space-y-2 pt-2">
-              <div className="flex justify-between items-center text-lg font-bold border-t border-zinc-700 pt-2">
-                <span>Total a Pagar:</span>
-                <span className="text-green-400">
+            <div className="pt-2">
+              <div className="bg-green-950/50 border-2 border-green-500/60 rounded-xl p-4 flex justify-between items-center">
+                <div>
+                  <p className="text-xs text-green-400 font-semibold uppercase tracking-wider">Total a Cobrar</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Valor a ser cobrado na maquina / cartao / pix</p>
+                </div>
+                <span className="text-3xl font-black text-green-400">
                   R$ {calcularTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
@@ -1001,9 +1112,13 @@ export function Vendas() {
                   </div>
                 </>
               )}
-              <div className="flex justify-between text-lg font-bold">
-                <span className="text-gray-400">Total:</span>
-                <span className="text-green-400">R$ {Number(vendaDetalhada?.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+              <div className="bg-green-950/50 border-2 border-green-500/60 rounded-xl p-3 flex justify-between items-center mt-2">
+                <div>
+                  <p className="text-xs text-green-400 font-semibold uppercase tracking-wider">Total a Pagar</p>
+                </div>
+                <span className="text-2xl font-black text-green-400">
+                  R$ {Number(vendaDetalhada?.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
 

@@ -309,6 +309,8 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
   const [prodTab, setProdTab] = useState<'todos' | 'motos' | 'pecas' | 'servicos'>('todos');
   const [faturamentoComp, setFaturamentoComp] = useState<FaturamentoComparativo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [filterLojaId, setFilterLojaId] = useState<number | null>(null);
+  const [lojas, setLojas] = useState<{ id: number; nomeFantasia: string }[]>([]);
 
   const navigateTo = (page: string) => {
     if (onNavigate) onNavigate(page);
@@ -320,23 +322,25 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
     if (periodo === 'custom' && customInicio && customFim) {
       params += `&dataInicio=${customInicio}&dataFim=${customFim}`;
     }
-    if (lojaId) params += `&lojaId=${lojaId}`;
+    const effectiveLojaId = lojaId || filterLojaId;
+    if (effectiveLojaId) params += `&lojaId=${effectiveLojaId}`;
     return params;
-  }, [periodo, customInicio, customFim, lojaId]);
+  }, [periodo, customInicio, customFim, lojaId, filterLojaId]);
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
 
     const params = buildParams();
-    const basicSuffix = lojaId ? `?lojaId=${lojaId}` : '';
+    const effectiveLojaId = lojaId || filterLojaId;
+    const basicSuffix = effectiveLojaId ? `?lojaId=${effectiveLojaId}` : '';
     try {
-      if (lojaId) {
+      if (effectiveLojaId) {
         const [produtos, grafico, basic, comp] = await Promise.all([
           api.get<ProdutosData>(`/dashboard/produtos-mais-vendidos${params}`),
           api.get<GraficoData>(`/dashboard/grafico-vendas${params}`),
           api.get<DashboardData>(`/dashboard${basicSuffix}`),
-          api.get<FaturamentoComparativo>(`/dashboard/faturamento-comparativo?lojaId=${lojaId}`),
+          api.get<FaturamentoComparativo>(`/dashboard/faturamento-comparativo?lojaId=${effectiveLojaId}`),
         ]);
         setProdutosData(produtos);
         setGraficoData(grafico);
@@ -362,7 +366,7 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [buildParams, lojaId]);
+  }, [buildParams, lojaId, filterLojaId]);
 
   useEffect(() => {
     fetchAll();
@@ -370,6 +374,12 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
     intervalRef.current = setInterval(() => fetchAll(true), 30000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchAll]);
+
+  useEffect(() => {
+    if (!lojaId) {
+      api.get<{ id: number; nomeFantasia: string }[]>('/lojas').then(setLojas).catch(() => {});
+    }
+  }, [lojaId]);
 
   const handleResetSistema = async () => {
     setResetting(true);
@@ -386,15 +396,17 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
     }
   };
 
+  const effectiveLojaId = lojaId || filterLojaId;
   const faturamentoPeriodo = (basicData?.vendasMes?.total || 0) + (basicData?.osMes?.total || 0);
   const transacoesPeriodo = (basicData?.vendasMes?.quantidade || 0) + (basicData?.osMes?.quantidade || 0);
-  const kpis = lojaId
+  const filterLojaName = filterLojaId ? (lojas.find(l => l.id === filterLojaId)?.nomeFantasia || '—') : null;
+  const kpis = effectiveLojaId
     ? {
         vendasHoje: basicData?.vendasMes?.total || 0,
         faturamentoTotal: faturamentoPeriodo,
         totalTransacoes: transacoesPeriodo,
         ticketMedioGeral: transacoesPeriodo > 0 ? faturamentoPeriodo / transacoesPeriodo : 0,
-        lojaLider: selectedLoja?.nomeFantasia || '—',
+        lojaLider: selectedLoja?.nomeFantasia || filterLojaName || '—',
         qtdVendasHoje: basicData?.vendasMes?.quantidade || 0,
       }
     : rankingData?.kpis;
@@ -458,44 +470,72 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
         </div>
       )}
 
-      {/* ── Filtro de período ── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-zinc-600 font-medium uppercase tracking-wider mr-1">Período:</span>
-        {PERIODOS.map(p => (
-          <button
-            key={p.key}
-            onClick={() => setPeriodo(p.key)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
-              ${periodo === p.key
-                ? 'bg-orange-500 text-white border-orange-500'
-                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
-          >
-            {p.label}
-          </button>
-        ))}
-        {periodo === 'custom' && (
-          <div className="flex items-center gap-2 ml-1">
-            <input
-              type="date"
-              value={customInicio}
-              onChange={e => setCustomInicio(e.target.value)}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
-            />
-            <span className="text-zinc-600 text-xs">–</span>
-            <input
-              type="date"
-              value={customFim}
-              onChange={e => setCustomFim(e.target.value)}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
-            />
+      {/* ── Filtros: Loja + Período ── */}
+      <div className="space-y-2">
+        {!lojaId && lojas.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-600 font-medium uppercase tracking-wider mr-1">Loja:</span>
             <button
-              onClick={() => fetchAll()}
-              className="px-3 py-1.5 bg-orange-500 text-white rounded-full text-xs hover:bg-orange-600 transition-colors"
+              onClick={() => setFilterLojaId(null)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+                ${filterLojaId === null
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
             >
-              Aplicar
+              Todas
             </button>
+            {lojas.map(l => (
+              <button
+                key={l.id}
+                onClick={() => setFilterLojaId(l.id)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+                  ${filterLojaId === l.id
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+              >
+                {l.nomeFantasia}
+              </button>
+            ))}
           </div>
         )}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-600 font-medium uppercase tracking-wider mr-1">Período:</span>
+          {PERIODOS.map(p => (
+            <button
+              key={p.key}
+              onClick={() => setPeriodo(p.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+                ${periodo === p.key
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+            >
+              {p.label}
+            </button>
+          ))}
+          {periodo === 'custom' && (
+            <div className="flex items-center gap-2 ml-1">
+              <input
+                type="date"
+                value={customInicio}
+                onChange={e => setCustomInicio(e.target.value)}
+                className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
+              />
+              <span className="text-zinc-600 text-xs">–</span>
+              <input
+                type="date"
+                value={customFim}
+                onChange={e => setCustomFim(e.target.value)}
+                className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-orange-500"
+              />
+              <button
+                onClick={() => fetchAll()}
+                className="px-3 py-1.5 bg-orange-500 text-white rounded-full text-xs hover:bg-orange-600 transition-colors"
+              >
+                Aplicar
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── KPI Cards Grandes ── */}
