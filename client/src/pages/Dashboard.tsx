@@ -309,6 +309,8 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
   const [prodTab, setProdTab] = useState<'todos' | 'motos' | 'pecas' | 'servicos'>('todos');
   const [faturamentoComp, setFaturamentoComp] = useState<FaturamentoComparativo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [lojasFiltro, setLojasFiltro] = useState<{ id: number; nomeFantasia: string }[]>([]);
+  const [filtroLojaId, setFiltroLojaId] = useState('');
 
   const navigateTo = (page: string) => {
     if (onNavigate) onNavigate(page);
@@ -320,23 +322,25 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
     if (periodo === 'custom' && customInicio && customFim) {
       params += `&dataInicio=${customInicio}&dataFim=${customFim}`;
     }
-    if (lojaId) params += `&lojaId=${lojaId}`;
+    const efectivoLojaId = lojaId || (filtroLojaId ? Number(filtroLojaId) : null);
+    if (efectivoLojaId) params += `&lojaId=${efectivoLojaId}`;
     return params;
-  }, [periodo, customInicio, customFim, lojaId]);
+  }, [periodo, customInicio, customFim, lojaId, filtroLojaId]);
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     else setRefreshing(true);
 
     const params = buildParams();
-    const basicSuffix = lojaId ? `?lojaId=${lojaId}` : '';
+    const efectivoLojaId = lojaId || (filtroLojaId ? Number(filtroLojaId) : null);
+    const basicSuffix = efectivoLojaId ? `?lojaId=${efectivoLojaId}` : '';
     try {
-      if (lojaId) {
+      if (efectivoLojaId) {
         const [produtos, grafico, basic, comp] = await Promise.all([
           api.get<ProdutosData>(`/dashboard/produtos-mais-vendidos${params}`),
           api.get<GraficoData>(`/dashboard/grafico-vendas${params}`),
           api.get<DashboardData>(`/dashboard${basicSuffix}`),
-          api.get<FaturamentoComparativo>(`/dashboard/faturamento-comparativo?lojaId=${lojaId}`),
+          api.get<FaturamentoComparativo>(`/dashboard/faturamento-comparativo?lojaId=${efectivoLojaId}`),
         ]);
         setProdutosData(produtos);
         setGraficoData(grafico);
@@ -371,6 +375,14 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchAll]);
 
+  useEffect(() => {
+    if (!lojaId) {
+      api.get<{ id: number; nomeFantasia: string }[]>('/lojas')
+        .then(setLojasFiltro)
+        .catch(() => {});
+    }
+  }, [lojaId]);
+
   const handleResetSistema = async () => {
     setResetting(true);
     try {
@@ -388,13 +400,15 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
 
   const faturamentoPeriodo = (basicData?.vendasMes?.total || 0) + (basicData?.osMes?.total || 0);
   const transacoesPeriodo = (basicData?.vendasMes?.quantidade || 0) + (basicData?.osMes?.quantidade || 0);
-  const kpis = lojaId
+  const efectivoLojaIdRender = lojaId || (filtroLojaId ? Number(filtroLojaId) : null);
+  const lojaFiltroNome = filtroLojaId ? (lojasFiltro.find(l => String(l.id) === filtroLojaId)?.nomeFantasia || '—') : null;
+  const kpis = efectivoLojaIdRender
     ? {
         vendasHoje: basicData?.vendasMes?.total || 0,
         faturamentoTotal: faturamentoPeriodo,
         totalTransacoes: transacoesPeriodo,
         ticketMedioGeral: transacoesPeriodo > 0 ? faturamentoPeriodo / transacoesPeriodo : 0,
-        lojaLider: selectedLoja?.nomeFantasia || '—',
+        lojaLider: lojaFiltroNome || selectedLoja?.nomeFantasia || '—',
         qtdVendasHoje: basicData?.vendasMes?.quantidade || 0,
       }
     : rankingData?.kpis;
@@ -421,11 +435,11 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-zinc-100">
-            {lojaId ? (selectedLoja?.nomeFantasia || 'Dashboard da Loja') : 'Dashboard'}
+            {efectivoLojaIdRender ? (lojaFiltroNome || selectedLoja?.nomeFantasia || 'Dashboard da Loja') : 'Dashboard'}
           </h1>
           <p className="text-sm text-zinc-500">
-            {lojaId ? (
-              <span className="text-zinc-400">Visão individual da unidade</span>
+            {efectivoLojaIdRender ? (
+              <span className="text-zinc-400">{filtroLojaId && !lojaId ? 'Filtrado por loja' : 'Visão individual da unidade'}</span>
             ) : (
               <>Bem-vindo, <span className="text-zinc-300">{user?.nome}</span></>
             )}
@@ -455,6 +469,34 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
             <p className="font-semibold text-red-400 text-sm">{alertasHoje} conta{alertasHoje > 1 ? 's' : ''} vencendo hoje</p>
             <p className="text-xs text-zinc-500">Clique para acessar o financeiro</p>
           </div>
+        </div>
+      )}
+
+      {/* ── Filtro de Loja (só na visão consolidada) ── */}
+      {!lojaId && lojasFiltro.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-600 font-medium uppercase tracking-wider mr-1">Loja:</span>
+          <button
+            onClick={() => setFiltroLojaId('')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+              ${!filtroLojaId
+                ? 'bg-orange-500 text-white border-orange-500'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+          >
+            Todas
+          </button>
+          {lojasFiltro.map(l => (
+            <button
+              key={l.id}
+              onClick={() => setFiltroLojaId(String(l.id))}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+                ${filtroLojaId === String(l.id)
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+            >
+              {l.nomeFantasia}
+            </button>
+          ))}
         </div>
       )}
 
@@ -502,7 +544,7 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
         <KpiBig
           icon="💰"
-          label={lojaId ? 'Vendas (período)' : 'Vendas hoje'}
+          label={efectivoLojaIdRender ? 'Vendas (período)' : 'Vendas hoje'}
           value={fmtCurrencyShort(kpis?.vendasHoje || 0)}
           sub={`${fmtNum(kpis?.qtdVendasHoje || 0)} venda${(kpis?.qtdVendasHoje || 0) !== 1 ? 's' : ''}`}
           accent
@@ -526,10 +568,10 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
           sub="por transação"
         />
         <KpiBig
-          icon={lojaId ? '🏪' : '🏆'}
-          label={lojaId ? 'Loja ativa' : 'Loja líder'}
+          icon={efectivoLojaIdRender ? '🏪' : '🏆'}
+          label={efectivoLojaIdRender ? 'Loja ativa' : 'Loja líder'}
           value={kpis?.lojaLider || '—'}
-          sub={lojaId ? 'unidade selecionada' : 'maior faturamento'}
+          sub={efectivoLojaIdRender ? 'unidade selecionada' : 'maior faturamento'}
         />
         <KpiBig
           icon="⚠️"
@@ -602,7 +644,7 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
 
         {/* Faturamento por loja / Comparativo diário-mensal-anual */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-          {lojaId ? (
+          {efectivoLojaIdRender ? (
             <>
               <SectionTitle icon="📅" title="Faturamento da Loja" sub="diário · mensal · anual" />
               {faturamentoComp ? (() => {
@@ -740,7 +782,7 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
       </div>
 
       {/* ── Ranking das Lojas / Resumo Financeiro ── */}
-      {lojaId ? (
+      {efectivoLojaIdRender ? (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
             <p className="text-xs text-zinc-500 mb-1">Contas vencendo hoje</p>
