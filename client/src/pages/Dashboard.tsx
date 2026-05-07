@@ -309,6 +309,8 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
   const [prodTab, setProdTab] = useState<'todos' | 'motos' | 'pecas' | 'servicos'>('todos');
   const [faturamentoComp, setFaturamentoComp] = useState<FaturamentoComparativo | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [lojas, setLojas] = useState<{ id: number; nomeFantasia: string }[]>([]);
+  const [filterLojaId, setFilterLojaId] = useState<number | null>(null);
 
   const navigateTo = (page: string) => {
     if (onNavigate) onNavigate(page);
@@ -321,8 +323,9 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
       params += `&dataInicio=${customInicio}&dataFim=${customFim}`;
     }
     if (lojaId) params += `&lojaId=${lojaId}`;
+    else if (filterLojaId) params += `&lojaId=${filterLojaId}`;
     return params;
-  }, [periodo, customInicio, customFim, lojaId]);
+  }, [periodo, customInicio, customFim, lojaId, filterLojaId]);
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -344,16 +347,18 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
         setFaturamentoComp(comp);
         setRankingData(null);
       } else {
-        const [ranking, produtos, grafico, basic] = await Promise.all([
+        const [ranking, produtos, grafico, basic, lojasData] = await Promise.all([
           api.get<RankingData>(`/dashboard/ranking-lojas${params}`),
           api.get<ProdutosData>(`/dashboard/produtos-mais-vendidos${params}`),
           api.get<GraficoData>(`/dashboard/grafico-vendas${params}`),
           api.get<DashboardData>('/dashboard'),
+          api.get<{ id: number; nomeFantasia: string }[]>('/lojas'),
         ]);
         setRankingData(ranking);
         setProdutosData(produtos);
         setGraficoData(grafico);
         setBasicData(basic);
+        setLojas(lojasData);
       }
       setLastUpdated(new Date());
     } catch (err) {
@@ -455,6 +460,34 @@ function AdminDashboard({ onNavigate, lojaId }: DashboardProps) {
             <p className="font-semibold text-red-400 text-sm">{alertasHoje} conta{alertasHoje > 1 ? 's' : ''} vencendo hoje</p>
             <p className="text-xs text-zinc-500">Clique para acessar o financeiro</p>
           </div>
+        </div>
+      )}
+
+      {/* ── Filtro de Loja (visão consolidada) ── */}
+      {!lojaId && lojas.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-zinc-600 font-medium uppercase tracking-wider mr-1">Loja:</span>
+          <button
+            onClick={() => setFilterLojaId(null)}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+              ${filterLojaId === null
+                ? 'bg-orange-500 text-white border-orange-500'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+          >
+            Todas
+          </button>
+          {lojas.map(loja => (
+            <button
+              key={loja.id}
+              onClick={() => setFilterLojaId(loja.id)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all border
+                ${filterLojaId === loja.id
+                  ? 'bg-orange-500 text-white border-orange-500'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'}`}
+            >
+              {loja.nomeFantasia}
+            </button>
+          ))}
         </div>
       )}
 
