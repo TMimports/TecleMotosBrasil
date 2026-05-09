@@ -133,6 +133,8 @@ const TAXAS_MAQUINA: Record<number, number> = {
 
 const TODAS_PARCELAS = Array.from({ length: 18 }, (_, i) => i + 1);
 
+const roundMoney = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
+
 export function Vendas() {
   const { user } = useAuth();
   const { selectedLojaId } = useLojaContext();
@@ -376,20 +378,16 @@ export function Vendas() {
 
   const calcularTotal = () => {
     const totalPecas = itensSelecionados.reduce((acc, item) => {
-      const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
+      const sub = roundMoney(item.preco * item.quantidade);
+      const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
+      return acc + roundMoney(sub - descVal);
     }, 0);
     const totalMotos = motosSelecionadas.reduce((acc, item) => {
-      const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
+      const sub = roundMoney(item.preco * item.quantidade);
+      const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
+      return acc + roundMoney(sub - descVal);
     }, 0);
-    const total = totalPecas + totalMotos;
-    if (total % 1 !== 0) {
-      return Math.ceil(total);
-    }
-    return total;
+    return roundMoney(totalPecas + totalMotos);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -442,7 +440,7 @@ export function Vendas() {
       const nParcelas = parseInt(form.parcelas) || 1;
       const taxa = TAXAS_MAQUINA[nParcelas] ?? 0;
       const comTaxa = totalFinal * (1 + taxa);
-      valorParaSalvar = comTaxa % 1 !== 0 ? Math.ceil(comTaxa) : comTaxa;
+      valorParaSalvar = roundMoney(comTaxa);
     } else {
       // PIX, Dinheiro, Débito: sem encargo
       valorParaSalvar = totalFinal;
@@ -1728,26 +1726,25 @@ export function Vendas() {
             {(motosSelecionadas.filter(m => m.produtoId).length > 0 || itensSelecionados.filter(i => i.produtoId).length > 0) && (
               <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                 {motosSelecionadas.filter(m => m.produtoId).map((item, idx) => {
-                  const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const subtotal = roundMoney(item.preco * item.quantidade);
+                  const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
+                  const finalItem = roundMoney(subtotal - descVal);
                   return (
                     <div key={`m-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{item.displayName || 'Moto'}</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {descVal > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto:</span>
+                          <span className="text-red-400">- R$ {descVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {descVal > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -1756,26 +1753,25 @@ export function Vendas() {
                 {itensSelecionados.filter(i => i.produtoId).map((item, idx) => {
                   const produto = produtos.find(p => p.id === parseInt(item.produtoId));
                   const nomeExibicao = produto?.nome || 'Peca';
-                  const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const subtotal = roundMoney(item.preco * item.quantidade);
+                  const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
+                  const finalItem = roundMoney(subtotal - descVal);
                   return (
                     <div key={`p-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{nomeExibicao} (x{item.quantidade})</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {descVal > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto:</span>
+                          <span className="text-red-400">- R$ {descVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {descVal > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
