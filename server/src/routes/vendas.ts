@@ -246,7 +246,7 @@ router.post('/', async (req: AuthRequest, res) => {
       }
 
       const subtotalBruto = precoUnitario * item.quantidade;
-      const subtotal = subtotalBruto * (1 - desconto / 100);
+      const subtotal = Math.round(subtotalBruto * (1 - desconto / 100) * 100) / 100;
       valorBruto += subtotalBruto;
       valorTotal += subtotal;
 
@@ -262,8 +262,8 @@ router.post('/', async (req: AuthRequest, res) => {
 
     if (valorTotalManual && Number(valorTotalManual) > 0) {
       valorTotal = Number(valorTotalManual);
-    } else if (valorTotal % 1 !== 0) {
-      valorTotal = Math.ceil(valorTotal);
+    } else {
+      valorTotal = Math.round(valorTotal * 100) / 100;
     }
 
     const tipoVenda = tipo || 'VENDA';
