@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../index.js';
 import { verifyToken, applyTenantFilter, AuthRequest, requireRole } from '../middleware/auth.js';
 import { InventoryService } from '../services/InventoryService.js';
+import { gerarNumeroSerieUnidade } from './importacao.js';
 
 const router = Router();
 
@@ -572,6 +573,81 @@ router.get('/consolidado', requireRole('ADMIN_GERAL', 'ADMIN_FINANCEIRO'), async
     res.json({ totais, empresas: resultado });
   } catch (error) {
     console.error('Erro ao buscar estoque consolidado:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// ─── ENTRADA MANUAL DE MOTO ──────────────────────────────────────────────────
+router.post('/entrada-moto', requireRole('ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'), async (req: AuthRequest, res) => {
+  try {
+    const { produtoId, lojaId, chassi, codigoMotor, cor, ano, custo, precoVenda } = req.body;
+
+    if (!produtoId || !lojaId) {
+      return res.status(400).json({ error: 'Produto e loja são obrigatórios' });
+    }
+
+    if (!chassi || !String(chassi).trim()) {
+      return res.status(400).json({ error: 'Chassi é obrigatório' });
+    }
+
+    const chassiLimpo = String(chassi).trim().toUpperCase();
+
+    const chassiExistente = await prisma.unidadeFisica.findFirst({ where: { chassi: chassiLimpo } });
+    if (chassiExistente) {
+      return res.status(400).json({ error: `Chassi "${chassiLimpo}" já está cadastrado` });
+    }
+
+    const numeroSerie = await gerarNumeroSerieUnidade();
+
+    const unidade = await prisma.unidadeFisica.create({
+      data: {
+        produtoId: Number(produtoId),
+        lojaId: Number(lojaId),
+        chassi: chassiLimpo,
+        codigoMotor: codigoMotor ? String(codigoMotor).trim().toUpperCase() : null,
+        cor: cor ? String(cor).trim() : null,
+        ano: ano ? Number(ano) : new Date().getFullYear(),
+        numeroSerie,
+        status: 'ESTOQUE',
+        createdBy: req.user!.id,
+      }
+    });
+
+    const estoque = await prisma.estoque.findUnique({
+      where: { produtoId_lojaId: { produtoId: Number(produtoId), lojaId: Number(lojaId) } }
+    });
+
+    const qtdAnterior = estoque?.quantidade || 0;
+    const qtdNova = qtdAnterior + 1;
+
+    const estoqueData: any = { quantidade: qtdNova };
+    if (custo !== undefined && custo !== '') estoqueData.custoMedio = Number(custo);
+    if (precoVenda !== undefined && precoVenda !== '') estoqueData.precoVenda = Number(precoVenda);
+
+    if (estoque) {
+      await prisma.estoque.update({ where: { id: estoque.id }, data: estoqueData });
+    } else {
+      await prisma.estoque.create({
+        data: { produtoId: Number(produtoId), lojaId: Number(lojaId), ...estoqueData }
+      });
+    }
+
+    await prisma.logEstoque.create({
+      data: {
+        tipo: 'ENTRADA',
+        origem: 'ENTRADA_MANUAL',
+        produtoId: Number(produtoId),
+        lojaId: Number(lojaId),
+        quantidade: 1,
+        quantidadeAnterior: qtdAnterior,
+        quantidadeNova: qtdNova,
+        usuarioId: req.user!.id,
+      }
+    });
+
+    res.status(201).json(unidade);
+  } catch (error) {
+    console.error('Erro ao cadastrar entrada de moto:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

@@ -1057,6 +1057,150 @@ function TabMovimentacao({ logs }: { logs: LogEstoque[] }) {
   );
 }
 
+// ─── ModalEntradaMoto ─────────────────────────────────────────────────────────
+
+interface ProdutoMoto { id: number; nome: string; }
+
+function ModalEntradaMoto({ lojaId, lojas, onClose, onSaved }: {
+  lojaId?: number | null;
+  lojas?: Loja[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [produtos, setProdutos] = useState<ProdutoMoto[]>([]);
+  const [form, setForm] = useState({
+    produtoId: '', lojaIdSel: lojaId ? String(lojaId) : '', cor: '', chassi: '', codigoMotor: '',
+    ano: String(new Date().getFullYear()), custo: '', precoVenda: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [erro, setErro] = useState('');
+
+  useEffect(() => {
+    api.get<any[]>('/produtos')
+      .then(data => setProdutos(
+        data.filter((p: any) => p.tipo === 'MOTO').map((p: any) => ({ id: p.id, nome: p.nome }))
+      ))
+      .catch(() => setProdutos([]));
+  }, []);
+
+  function set(field: string, value: string) {
+    setForm(f => ({ ...f, [field]: value }));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const destinoLojaId = lojaId ?? Number(form.lojaIdSel);
+    if (!form.produtoId || !form.chassi.trim() || !destinoLojaId) {
+      setErro('Produto, chassi e empresa de destino são obrigatórios');
+      return;
+    }
+    setSaving(true);
+    setErro('');
+    try {
+      await api.post('/estoque/entrada-moto', {
+        produtoId: Number(form.produtoId),
+        lojaId: destinoLojaId,
+        chassi: form.chassi.trim(),
+        codigoMotor: form.codigoMotor.trim() || null,
+        cor: form.cor.trim() || null,
+        ano: form.ano ? Number(form.ano) : new Date().getFullYear(),
+        custo: form.custo ? Number(form.custo) : undefined,
+        precoVenda: form.precoVenda ? Number(form.precoVenda) : undefined,
+      });
+      onSaved();
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao cadastrar moto');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-[#18181b] border border-[#27272a] rounded-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-[#27272a]">
+          <h2 className="text-white font-semibold text-base">+ Entrada de Moto</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {!lojaId && lojas && lojas.length > 0 && (
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Empresa / Loja de Destino *</label>
+              <Select value={form.lojaIdSel} onChange={e => set('lojaIdSel', e.target.value)} required>
+                <option value="">Selecione a empresa...</option>
+                {lojas.map(l => (
+                  <option key={l.id} value={l.id}>
+                    {l.id === LOJA_IMPORTACAO_ID ? `🏭 ${l.nomeFantasia}` : `🏪 ${l.nomeFantasia}`}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Modelo / Produto *</label>
+            <Select value={form.produtoId} onChange={e => set('produtoId', e.target.value)} required>
+              <option value="">Selecione o modelo...</option>
+              {produtos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Cor</label>
+              <Input value={form.cor} onChange={e => set('cor', e.target.value)} placeholder="Ex: Vermelho" />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Ano</label>
+              <Input type="number" value={form.ano} onChange={e => set('ano', e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Chassi *</label>
+            <Input
+              value={form.chassi}
+              onChange={e => set('chassi', e.target.value.toUpperCase())}
+              placeholder="Ex: 9C2JC5110SR000001"
+              required
+            />
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400 block mb-1">Código do Motor</label>
+            <Input
+              value={form.codigoMotor}
+              onChange={e => set('codigoMotor', e.target.value.toUpperCase())}
+              placeholder="Ex: JC51E-1234567"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Custo (R$)</label>
+              <Input type="number" step="0.01" min="0" value={form.custo} onChange={e => set('custo', e.target.value)} placeholder="0,00" />
+            </div>
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Preço Venda (R$)</label>
+              <Input type="number" step="0.01" min="0" value={form.precoVenda} onChange={e => set('precoVenda', e.target.value)} placeholder="0,00" />
+            </div>
+          </div>
+          {erro && <p className="text-red-400 text-sm">{erro}</p>}
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button" onClick={onClose}
+              className="flex-1 py-2 rounded-lg border border-[#27272a] text-zinc-400 hover:text-white text-sm transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit" disabled={saving}
+              className="flex-1 py-2 rounded-lg bg-orange-500 hover:bg-orange-400 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+            >
+              {saving ? 'Salvando...' : 'Cadastrar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ─── TabSolicitacoes ──────────────────────────────────────────────────────────
 
 function TabSolicitacoes({
@@ -1203,17 +1347,24 @@ function TabSolicitacoes({
 
 // ─── View Consolidada (Admin) ─────────────────────────────────────────────────
 
-function ViewConsolidada({ onSelectEmpresa }: { onSelectEmpresa: (lojaId: number) => void; }) {
+function ViewConsolidada({ onSelectEmpresa, lojas, canEntrarMoto }: {
+  onSelectEmpresa: (lojaId: number) => void;
+  lojas: Loja[];
+  canEntrarMoto: boolean;
+}) {
   const [data, setData] = useState<ConsolidadoResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
+  const [modalEntrada, setModalEntrada] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
     api.get<ConsolidadoResponse>('/estoque/consolidado')
       .then(d => setData(d && d.totais ? d : null))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [refreshKey]);
 
   const empresas = useMemo(() => {
     if (!data) return [];
@@ -1230,13 +1381,31 @@ function ViewConsolidada({ onSelectEmpresa }: { onSelectEmpresa: (lojaId: number
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiBlock label="Empresas" value={t.totalEmpresas} color="text-white" />
-        <KpiBlock label="Motos" value={t.totalMotos} color="text-orange-400" />
-        <KpiBlock label="Peças" value={t.totalPecas} color="text-blue-400" />
-        <KpiBlock label="Custo Total" value={fmtBRL(t.valorTotalCusto)} color="text-zinc-200" />
-        <KpiBlock label="Valor Venda" value={fmtBRL(t.valorTotalVenda)} color="text-green-400" />
-        <KpiBlock label="Alertas" value={t.totalAlertas} color={t.totalAlertas > 0 ? 'text-yellow-400' : 'text-zinc-400'} />
+      {modalEntrada && (
+        <ModalEntradaMoto
+          lojas={lojas}
+          onClose={() => setModalEntrada(false)}
+          onSaved={() => { setModalEntrada(false); setRefreshKey(k => k + 1); }}
+        />
+      )}
+
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 flex-1">
+          <KpiBlock label="Empresas" value={t.totalEmpresas} color="text-white" />
+          <KpiBlock label="Motos" value={t.totalMotos} color="text-orange-400" />
+          <KpiBlock label="Peças" value={t.totalPecas} color="text-blue-400" />
+          <KpiBlock label="Custo Total" value={fmtBRL(t.valorTotalCusto)} color="text-zinc-200" />
+          <KpiBlock label="Valor Venda" value={fmtBRL(t.valorTotalVenda)} color="text-green-400" />
+          <KpiBlock label="Alertas" value={t.totalAlertas} color={t.totalAlertas > 0 ? 'text-yellow-400' : 'text-zinc-400'} />
+        </div>
+        {canEntrarMoto && (
+          <button
+            onClick={() => setModalEntrada(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-400 hover:bg-orange-500/30 text-sm font-medium transition-colors whitespace-nowrap"
+          >
+            + Entrada de Moto
+          </button>
+        )}
       </div>
 
       <Card className="p-4">
@@ -1316,12 +1485,16 @@ function ViewEmpresa({
   lojas: Loja[];
   verCustos: boolean;
 }) {
+  const { user: userVE } = useAuth();
   const [data, setData] = useState<EmpresaDetalhes | null>(null);
   const [loading, setLoading] = useState(true);
   const [aba, setAba] = useState<EmpresaTab>('gerencial');
   const [busca, setBusca] = useState('');
   const [tipoFiltro, setTipoFiltro] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [modalEntrada, setModalEntrada] = useState(false);
   const isOutraLoja = minhaLojaId !== null && lojaId !== minhaLojaId;
+  const podeEntrarMoto = !isOutraLoja && ['ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'].includes(userVE?.role || '');
 
   useEffect(() => {
     setLoading(true);
@@ -1331,7 +1504,7 @@ function ViewEmpresa({
       .then(d => setData(d && d.empresa ? d : null))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [lojaId]);
+  }, [lojaId, refreshKey]);
 
   if (loading) return <div className="p-12 text-center text-zinc-400">Carregando estoque da empresa...</div>;
   if (!data) return <div className="p-12 text-center text-red-400">Erro ao carregar dados da empresa</div>;
@@ -1376,12 +1549,30 @@ function ViewEmpresa({
           <p className="text-sm text-zinc-400">{e.razaoSocial} — <span className="font-mono">{e.cnpj}</span></p>
           <p className="text-xs text-zinc-500 mt-0.5">Grupo: {e.grupoNome}</p>
         </div>
-        {t.alertasBaixoEstoque > 0 && (
-          <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded-lg text-sm">
-            ⚠ {t.alertasBaixoEstoque} alerta{t.alertasBaixoEstoque > 1 ? 's' : ''} de estoque baixo
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {t.alertasBaixoEstoque > 0 && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 px-3 py-1.5 rounded-lg text-sm">
+              ⚠ {t.alertasBaixoEstoque} alerta{t.alertasBaixoEstoque > 1 ? 's' : ''} de estoque baixo
+            </div>
+          )}
+          {podeEntrarMoto && (
+            <button
+              onClick={() => setModalEntrada(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-400 hover:bg-orange-500/30 text-sm font-medium transition-colors"
+            >
+              + Entrada de Moto
+            </button>
+          )}
+        </div>
       </div>
+
+      {modalEntrada && (
+        <ModalEntradaMoto
+          lojaId={lojaId}
+          onClose={() => setModalEntrada(false)}
+          onSaved={() => { setModalEntrada(false); setRefreshKey(k => k + 1); }}
+        />
+      )}
 
       {/* Aviso de outra loja */}
       {isOutraLoja && (
@@ -1666,7 +1857,11 @@ export function Estoque() {
           onVerLoja={handleVerLoja}
         />
       ) : showConsolidado ? (
-        <ViewConsolidada onSelectEmpresa={setLojaId} />
+        <ViewConsolidada
+          onSelectEmpresa={setLojaId}
+          lojas={lojasSorted}
+          canEntrarMoto={['ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'].includes(role)}
+        />
       ) : lojaId ? (
         <ViewEmpresa
           lojaId={lojaId}
