@@ -1201,6 +1201,165 @@ function TabSolicitacoes({
   );
 }
 
+// ─── Modal Entrada de Moto ────────────────────────────────────────────────────
+
+interface ProdutoSimples { id: number; nome: string; tipo: string; }
+
+function ModalEntradaMoto({ lojas, lojaIdInicial, onClose, onSuccess }: {
+  lojas: Loja[];
+  lojaIdInicial: number | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [produtos, setProdutos] = useState<ProdutoSimples[]>([]);
+  const [form, setForm] = useState({
+    lojaId: lojaIdInicial ? String(lojaIdInicial) : '',
+    produtoId: '',
+    chassi: '',
+    codigoMotor: '',
+    cor: '',
+    ano: '',
+    sku: '',
+    custo: '',
+    precoVenda: '',
+  });
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState('');
+  const [sucesso, setSucesso] = useState(false);
+
+  useEffect(() => {
+    api.get<ProdutoSimples[]>('/produtos')
+      .then(lista => setProdutos(lista.filter(p => p.tipo === 'MOTO')))
+      .catch(() => setProdutos([]));
+  }, []);
+
+  function set(field: string, value: string) {
+    setForm(f => ({ ...f, [field]: value }));
+    setErro('');
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.lojaId || !form.produtoId || !form.chassi.trim()) {
+      setErro('Empresa, modelo e chassi são obrigatórios.');
+      return;
+    }
+    setLoading(true);
+    setErro('');
+    try {
+      await api.post('/estoque/entrada-moto', {
+        lojaId: Number(form.lojaId),
+        produtoId: Number(form.produtoId),
+        chassi: form.chassi.trim().toUpperCase(),
+        codigoMotor: form.codigoMotor.trim() || undefined,
+        cor: form.cor.trim() || undefined,
+        ano: form.ano ? Number(form.ano) : undefined,
+        sku: form.sku.trim() || undefined,
+        custo: form.custo ? Number(form.custo) : undefined,
+        precoVenda: form.precoVenda ? Number(form.precoVenda) : undefined,
+      });
+      setSucesso(true);
+      setTimeout(() => { onSuccess(); onClose(); }, 1200);
+    } catch (err: any) {
+      setErro(err?.message || err?.error || 'Erro ao cadastrar moto.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const inputCls = "w-full bg-zinc-800 border border-zinc-600 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-500";
+  const labelCls = "block text-xs text-zinc-400 mb-1";
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b border-zinc-800">
+          <h2 className="text-lg font-bold text-white">+ Entrada de Moto</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl leading-none">×</button>
+        </div>
+
+        {sucesso ? (
+          <div className="p-8 text-center">
+            <p className="text-4xl mb-3">✅</p>
+            <p className="text-green-400 font-semibold text-lg">Moto cadastrada com sucesso!</p>
+            <p className="text-zinc-400 text-sm mt-1">O estoque foi atualizado.</p>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="p-5 space-y-4">
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className={labelCls}>Empresa / Loja de destino *</label>
+                <select value={form.lojaId} onChange={e => set('lojaId', e.target.value)} className={inputCls} required>
+                  <option value="">Selecionar empresa...</option>
+                  {lojas.map(l => <option key={l.id} value={l.id}>{l.nomeFantasia}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Modelo / Produto *</label>
+                <select value={form.produtoId} onChange={e => set('produtoId', e.target.value)} className={inputCls} required>
+                  <option value="">Selecionar modelo...</option>
+                  {produtos.map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className={labelCls}>Chassi *</label>
+                <input value={form.chassi} onChange={e => set('chassi', e.target.value.toUpperCase())}
+                  placeholder="Ex: 9C2JC2110S0000001" className={inputCls} required />
+              </div>
+              <div>
+                <label className={labelCls}>Cód. Motor</label>
+                <input value={form.codigoMotor} onChange={e => set('codigoMotor', e.target.value)}
+                  placeholder="Opcional" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Cor</label>
+                <input value={form.cor} onChange={e => set('cor', e.target.value)}
+                  placeholder="Ex: Vermelho" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Ano</label>
+                <input type="number" value={form.ano} onChange={e => set('ano', e.target.value)}
+                  placeholder={String(new Date().getFullYear())} className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>SKU / SKR</label>
+                <input value={form.sku} onChange={e => set('sku', e.target.value)}
+                  placeholder="Opcional" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Custo (R$)</label>
+                <input type="number" step="0.01" value={form.custo} onChange={e => set('custo', e.target.value)}
+                  placeholder="0,00" className={inputCls} />
+              </div>
+              <div>
+                <label className={labelCls}>Preço de Venda (R$)</label>
+                <input type="number" step="0.01" value={form.precoVenda} onChange={e => set('precoVenda', e.target.value)}
+                  placeholder="0,00" className={inputCls} />
+              </div>
+            </div>
+
+            {erro && <p className="text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2">{erro}</p>}
+
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={onClose}
+                className="flex-1 px-4 py-2 text-sm text-zinc-400 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
+                Cancelar
+              </button>
+              <button type="submit" disabled={loading}
+                className="flex-1 px-4 py-2 text-sm font-bold text-white bg-orange-500 hover:bg-orange-600 rounded-lg transition-colors disabled:opacity-50">
+                {loading ? 'Salvando...' : 'Cadastrar Moto'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── View Consolidada (Admin) ─────────────────────────────────────────────────
 
 function ViewConsolidada({ onSelectEmpresa }: { onSelectEmpresa: (lojaId: number) => void; }) {
@@ -1509,11 +1668,14 @@ export function Estoque() {
   const [refreshSolicitacoes, setRefreshSolicitacoes] = useState(0);
   const [modoBusca, setModoBusca] = useState(false);
   const [modoTransferencias, setModoTransferencias] = useState(false);
+  const [showEntradaMoto, setShowEntradaMoto] = useState(false);
+  const [refreshEstoque, setRefreshEstoque] = useState(0);
 
   const role = user?.role || '';
   const isAdmin = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO'].includes(role);
   const isAprovador = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO'].includes(role);
   const verCustosGlobal = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO', 'ADMIN_REDE'].includes(role);
+  const podeEntrarMoto = ['ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'].includes(role);
   const minhaLojaId = user?.lojaId ?? null;
   const showConsolidado = isAdmin && lojaId === null && !modoBusca && !modoTransferencias;
 
@@ -1626,6 +1788,17 @@ export function Estoque() {
             🔍 <span className="hidden sm:inline">Buscar na Rede</span>
           </button>
 
+          {/* Botão Entrada de Moto */}
+          {podeEntrarMoto && !modoBusca && !modoTransferencias && (
+            <button
+              onClick={() => setShowEntradaMoto(true)}
+              title="Registrar entrada manual de moto no estoque"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors bg-[#18181b] text-zinc-300 border-[#27272a] hover:border-green-500 hover:text-green-400"
+            >
+              🏍️ <span className="hidden sm:inline">+ Entrada de Moto</span>
+            </button>
+          )}
+
           {/* Seletor de empresa (oculto no modo busca e transferências) */}
           {!modoBusca && !modoTransferencias && (
             <div className="min-w-64">
@@ -1666,9 +1839,10 @@ export function Estoque() {
           onVerLoja={handleVerLoja}
         />
       ) : showConsolidado ? (
-        <ViewConsolidada onSelectEmpresa={setLojaId} />
+        <ViewConsolidada key={refreshEstoque} onSelectEmpresa={setLojaId} />
       ) : lojaId ? (
         <ViewEmpresa
+          key={`${lojaId}-${refreshEstoque}`}
           lojaId={lojaId}
           minhaLojaId={minhaLojaId}
           isAprovador={isAprovador}
@@ -1684,6 +1858,15 @@ export function Estoque() {
           <p className="text-lg font-medium text-zinc-400">Nenhuma empresa disponível</p>
           <p className="text-sm mt-1">Cadastre lojas no sistema para ver o estoque</p>
         </div>
+      )}
+
+      {showEntradaMoto && (
+        <ModalEntradaMoto
+          lojas={lojasSorted}
+          lojaIdInicial={lojaId}
+          onClose={() => setShowEntradaMoto(false)}
+          onSuccess={() => setRefreshEstoque(k => k + 1)}
+        />
       )}
     </div>
   );

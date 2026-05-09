@@ -517,6 +517,88 @@ router.get('/buscar-rede', async (req: AuthRequest, res) => {
   }
 });
 
+// ─── ENTRADA MANUAL DE MOTO ───────────────────────────────────────────────────
+router.post('/entrada-moto', requireRole('ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'), async (req: AuthRequest, res) => {
+  try {
+    const { lojaId, produtoId, chassi, codigoMotor, cor, ano, sku, custo, precoVenda, observacao } = req.body;
+
+    if (!lojaId || !produtoId || !chassi) {
+      return res.status(400).json({ error: 'lojaId, produtoId e chassi são obrigatórios' });
+    }
+
+    const chassiNorm = String(chassi).toUpperCase().trim();
+
+    const chassiExistente = await prisma.unidadeFisica.findFirst({ where: { chassi: chassiNorm } });
+    if (chassiExistente) {
+      return res.status(409).json({ error: `Chassi ${chassiNorm} já está cadastrado no sistema` });
+    }
+
+    const [loja, produto] = await Promise.all([
+      prisma.loja.findUnique({ where: { id: Number(lojaId) } }),
+      prisma.produto.findUnique({ where: { id: Number(produtoId) } }),
+    ]);
+    if (!loja) return res.status(404).json({ error: 'Loja não encontrada' });
+    if (!produto) return res.status(404).json({ error: 'Produto não encontrado' });
+
+    const [unidade, estoque] = await prisma.$transaction(async (tx) => {
+      const u = await tx.unidadeFisica.create({
+        data: {
+          produtoId: Number(produtoId),
+          lojaId: Number(lojaId),
+          chassi: chassiNorm,
+          codigoMotor: codigoMotor ? String(codigoMotor).trim() : null,
+          cor: cor ? String(cor).trim() : null,
+          ano: ano ? Number(ano) : null,
+          numeroSerie: sku ? String(sku).trim() : null,
+          status: 'ESTOQUE',
+          createdBy: req.user!.id,
+        },
+      });
+
+      const estoqueAtual = await tx.estoque.findUnique({
+        where: { produtoId_lojaId: { produtoId: Number(produtoId), lojaId: Number(lojaId) } },
+      });
+      const qtdAnterior = estoqueAtual?.quantidade ?? 0;
+
+      const e = await tx.estoque.upsert({
+        where: { produtoId_lojaId: { produtoId: Number(produtoId), lojaId: Number(lojaId) } },
+        create: {
+          produtoId: Number(produtoId),
+          lojaId: Number(lojaId),
+          quantidade: 1,
+          custoMedio: custo ? Number(custo) : null,
+          precoVenda: precoVenda ? Number(precoVenda) : null,
+        },
+        update: {
+          quantidade: { increment: 1 },
+          ...(custo && { custoMedio: Number(custo) }),
+          ...(precoVenda && { precoVenda: Number(precoVenda) }),
+        },
+      });
+
+      await tx.logEstoque.create({
+        data: {
+          tipo: 'ENTRADA',
+          origem: 'ENTRADA_MANUAL',
+          produtoId: Number(produtoId),
+          lojaId: Number(lojaId),
+          quantidade: 1,
+          quantidadeAnterior: qtdAnterior,
+          quantidadeNova: qtdAnterior + 1,
+          usuarioId: req.user!.id,
+        },
+      });
+
+      return [u, e];
+    });
+
+    res.status(201).json({ unidade, estoque });
+  } catch (error) {
+    console.error('Erro ao registrar entrada de moto:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // ─── VISÃO CONSOLIDADA (todos os CNPJs) ───────────────────────────────────────
 router.get('/consolidado', requireRole('ADMIN_GERAL', 'ADMIN_FINANCEIRO'), async (req: AuthRequest, res) => {
   try {
