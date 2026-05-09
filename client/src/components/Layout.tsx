@@ -110,7 +110,6 @@ const menuItems: Record<string, NavEntry[]> = {
     VENDAS_GROUP(),
     FIN_GROUP,
     RELATORIOS_ITEM,
-    item('crm-leads-beta', 'CRM Leads (Beta)', '🎯'),
     item('log-atividades', 'Log de Atividades', '🔍'),
     CONFIG_ITEM,
   ],
