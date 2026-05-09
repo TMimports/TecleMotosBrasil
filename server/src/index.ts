@@ -97,11 +97,11 @@ if (isDev) {
         admin = await prisma.user.create({
           data: { nome: 'Admin Geral', email: 'admin@teclemotos.com', senha, role: 'ADMIN_GERAL', ativo: true }
         });
-        res.json({ status: 'Admin criado!', email: 'admin@teclemotos.com', senha: '123456' });
+        res.json({ status: 'Admin criado!', email: 'admin@teclemotos.com' });
       } else {
         const senha = await bcrypt.default.hash('123456', 10);
         await prisma.user.update({ where: { id: admin.id }, data: { senha, ativo: true, lojaId: null, grupoId: null } });
-        res.json({ status: 'Senha resetada!', email: 'admin@teclemotos.com', senha: '123456' });
+        res.json({ status: 'Senha resetada!', email: 'admin@teclemotos.com' });
       }
     } catch (error: any) {
       res.status(500).json({ error: error.message });

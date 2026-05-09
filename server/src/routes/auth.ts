@@ -147,36 +147,4 @@ router.post('/trocar-senha', verifyToken, async (req: AuthRequest, res) => {
   }
 });
 
-router.get('/setup-admin', async (req, res) => {
-  try {
-    const senhaHash = await bcrypt.hash('123456', 10);
-    
-    let admin = await prisma.user.findFirst({
-      where: { role: 'ADMIN_GERAL' }
-    });
-    
-    if (!admin) {
-      admin = await prisma.user.create({
-        data: {
-          nome: 'Admin Geral',
-          email: 'admin@teclemotos.com',
-          senha: senhaHash,
-          role: 'ADMIN_GERAL',
-          ativo: true
-        }
-      });
-      res.json({ success: true, message: 'Admin criado com sucesso', email: admin.email });
-    } else {
-      await prisma.user.update({
-        where: { id: admin.id },
-        data: { senha: senhaHash }
-      });
-      res.json({ success: true, message: 'Senha do admin resetada para 123456', email: admin.email });
-    }
-  } catch (error) {
-    console.error('Erro ao setup admin:', error);
-    res.status(500).json({ error: 'Erro interno do servidor' });
-  }
-});
-
 export default router;
