@@ -576,4 +576,81 @@ router.get('/consolidado', requireRole('ADMIN_GERAL', 'ADMIN_FINANCEIRO'), async
   }
 });
 
+// ─── ENTRADA MANUAL DE MOTO ───────────────────────────────────────────────────
+router.post('/entrada-moto', requireRole('ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'), async (req: AuthRequest, res) => {
+  try {
+    const { lojaId, produtoId, chassi, codigoMotor, cor, ano, skr, custo, precoVenda } = req.body;
+
+    if (!lojaId || !produtoId || !chassi) {
+      return res.status(400).json({ error: 'lojaId, produtoId e chassi são obrigatórios' });
+    }
+
+    const existente = await prisma.unidadeFisica.findFirst({ where: { chassi: String(chassi) } });
+    if (existente) {
+      return res.status(409).json({ error: 'Chassi já cadastrado no sistema' });
+    }
+
+    const produto = await prisma.produto.findUnique({ where: { id: Number(produtoId) } });
+    if (!produto || produto.tipo !== 'MOTO') {
+      return res.status(400).json({ error: 'Produto não encontrado ou não é do tipo MOTO' });
+    }
+
+    const estoqueAtual = await prisma.estoque.findFirst({
+      where: { lojaId: Number(lojaId), produtoId: Number(produtoId) }
+    });
+    const qtdAnterior = estoqueAtual?.quantidade ?? 0;
+
+    const unidade = await prisma.unidadeFisica.create({
+      data: {
+        produtoId: Number(produtoId),
+        lojaId: Number(lojaId),
+        chassi: String(chassi),
+        codigoMotor: codigoMotor || null,
+        cor: cor || null,
+        ano: ano ? Number(ano) : null,
+        numeroSerie: skr || null,
+        status: 'ESTOQUE',
+        createdBy: req.user!.id,
+      }
+    });
+
+    const novoEstoque = await prisma.estoque.upsert({
+      where: { produtoId_lojaId: { produtoId: Number(produtoId), lojaId: Number(lojaId) } },
+      update: {
+        quantidade: { increment: 1 },
+        ...(custo ? { custoMedio: Number(custo) } : {}),
+        ...(precoVenda ? { precoVenda: Number(precoVenda) } : {}),
+      },
+      create: {
+        lojaId: Number(lojaId),
+        produtoId: Number(produtoId),
+        quantidade: 1,
+        estoqueMinimo: 0,
+        estoqueMaximo: 0,
+        ...(custo ? { custoMedio: Number(custo) } : {}),
+        ...(precoVenda ? { precoVenda: Number(precoVenda) } : {}),
+      }
+    });
+
+    await prisma.logEstoque.create({
+      data: {
+        tipo: 'ENTRADA',
+        origem: 'MANUAL',
+        origemId: unidade.id,
+        produtoId: Number(produtoId),
+        lojaId: Number(lojaId),
+        quantidade: 1,
+        quantidadeAnterior: qtdAnterior,
+        quantidadeNova: novoEstoque.quantidade,
+        usuarioId: req.user!.id,
+      }
+    });
+
+    res.status(201).json({ unidade, estoque: novoEstoque });
+  } catch (error: any) {
+    console.error('Erro ao cadastrar entrada de moto:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 export default router;

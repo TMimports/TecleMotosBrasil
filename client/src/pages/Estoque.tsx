@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, Fragment } from 'react';
+import { useEffect, useState, useMemo, Fragment, type FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLojaContext } from '../contexts/LojaContext';
 import { api } from '../services/api';
@@ -54,6 +54,8 @@ interface EmpresaDetalhes {
   unitaria: ItemUnitario[];
   logsRecentes: LogEstoque[];
 }
+
+interface ProdutoSimples { id: number; nome: string; tipo: string; codigo: string; }
 
 interface Transferencia {
   id: number;
@@ -1500,6 +1502,221 @@ const LOJA_ORDER: Record<number, number> = {
   3: 11,  // Itaipuaçu
 };
 
+// ─── Modal Entrada de Moto ────────────────────────────────────────────────────
+
+function ModalEntradaMoto({ lojas, defaultLojaId, onClose, onSuccess }: {
+  lojas: Loja[];
+  defaultLojaId: number | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [lojaId, setLojaId] = useState<number | ''>(defaultLojaId ?? '');
+  const [produtoId, setProdutoId] = useState<number | ''>('');
+  const [cor, setCor] = useState('');
+  const [ano, setAno] = useState('');
+  const [chassi, setChassi] = useState('');
+  const [codigoMotor, setCodigoMotor] = useState('');
+  const [skr, setSkr] = useState('');
+  const [custo, setCusto] = useState('');
+  const [precoVenda, setPrecoVenda] = useState('');
+  const [motos, setMotos] = useState<ProdutoSimples[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState('');
+  const [sucesso, setSucesso] = useState(false);
+
+  useEffect(() => {
+    api.get<ProdutoSimples[]>('/produtos')
+      .then(lista => setMotos(lista.filter(p => p.tipo === 'MOTO')))
+      .catch(() => setMotos([]));
+  }, []);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!lojaId || !produtoId || !chassi.trim()) {
+      setErro('Empresa, modelo e chassi são obrigatórios');
+      return;
+    }
+    setLoading(true);
+    setErro('');
+    try {
+      await api.post('/estoque/entrada-moto', {
+        lojaId: Number(lojaId),
+        produtoId: Number(produtoId),
+        chassi: chassi.trim().toUpperCase(),
+        codigoMotor: codigoMotor.trim() || undefined,
+        cor: cor.trim() || undefined,
+        ano: ano ? Number(ano) : undefined,
+        skr: skr.trim() || undefined,
+        custo: custo ? Number(custo) : undefined,
+        precoVenda: precoVenda ? Number(precoVenda) : undefined,
+      });
+      setSucesso(true);
+      setTimeout(() => onSuccess(), 1200);
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao cadastrar moto');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-[#18181b] border border-[#27272a] rounded-2xl w-full max-w-lg shadow-2xl overflow-y-auto max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#27272a]">
+          <h3 className="text-white font-semibold text-lg">🏍️ Entrada de Moto</h3>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl transition-colors leading-none">✕</button>
+        </div>
+
+        {sucesso ? (
+          <div className="p-8 text-center">
+            <p className="text-3xl mb-3">✅</p>
+            <p className="text-green-400 font-semibold">Moto cadastrada com sucesso!</p>
+            <p className="text-zinc-500 text-sm mt-1">Estoque atualizado.</p>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="p-6 space-y-4">
+            {/* Empresa */}
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Empresa / Loja de destino *</label>
+              <select
+                value={lojaId}
+                onChange={e => setLojaId(e.target.value ? Number(e.target.value) : '')}
+                required
+                className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+              >
+                <option value="">Selecione a empresa...</option>
+                {lojas.map(l => <option key={l.id} value={l.id} className="bg-zinc-800">{l.nomeFantasia}</option>)}
+              </select>
+            </div>
+
+            {/* Modelo */}
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Modelo / Produto *</label>
+              <select
+                value={produtoId}
+                onChange={e => setProdutoId(e.target.value ? Number(e.target.value) : '')}
+                required
+                className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+              >
+                <option value="">Selecione o modelo...</option>
+                {motos.map(m => <option key={m.id} value={m.id} className="bg-zinc-800">{m.nome} — {m.codigo}</option>)}
+              </select>
+            </div>
+
+            {/* Chassi + Código Motor */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Chassi *</label>
+                <input
+                  type="text"
+                  value={chassi}
+                  onChange={e => setChassi(e.target.value.toUpperCase())}
+                  required
+                  placeholder="Ex: 9C6JF621XR0..."
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Cód. Motor</label>
+                <input
+                  type="text"
+                  value={codigoMotor}
+                  onChange={e => setCodigoMotor(e.target.value.toUpperCase())}
+                  placeholder="Opcional"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+            </div>
+
+            {/* Cor + Ano + SKU/SKR */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Cor</label>
+                <input
+                  type="text"
+                  value={cor}
+                  onChange={e => setCor(e.target.value)}
+                  placeholder="Ex: Vermelho"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Ano</label>
+                <input
+                  type="number"
+                  value={ano}
+                  onChange={e => setAno(e.target.value)}
+                  placeholder="2025"
+                  min="2000"
+                  max="2030"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">SKU/SKR</label>
+                <input
+                  type="text"
+                  value={skr}
+                  onChange={e => setSkr(e.target.value)}
+                  placeholder="Opcional"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+            </div>
+
+            {/* Custo + Preço Venda */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Custo (R$)</label>
+                <input
+                  type="number"
+                  value={custo}
+                  onChange={e => setCusto(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                  min="0"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Preço de Venda (R$)</label>
+                <input
+                  type="number"
+                  value={precoVenda}
+                  onChange={e => setPrecoVenda(e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                  min="0"
+                  className="w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-600"
+                />
+              </div>
+            </div>
+
+            {erro && <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{erro}</p>}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium py-2.5 rounded-xl text-sm transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2.5 rounded-xl text-sm transition-colors"
+              >
+                {loading ? 'Cadastrando...' : '+ Cadastrar Moto'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Estoque() {
   const { user } = useAuth();
   const { selectedLojaId: ctxLojaId } = useLojaContext();
@@ -1509,9 +1726,11 @@ export function Estoque() {
   const [refreshSolicitacoes, setRefreshSolicitacoes] = useState(0);
   const [modoBusca, setModoBusca] = useState(false);
   const [modoTransferencias, setModoTransferencias] = useState(false);
+  const [showEntradaMoto, setShowEntradaMoto] = useState(false);
 
   const role = user?.role || '';
   const isAdmin = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO'].includes(role);
+  const podeEntradaMoto = ['ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'].includes(role);
   const isAprovador = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO'].includes(role);
   const verCustosGlobal = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO', 'ADMIN_REDE'].includes(role);
   const minhaLojaId = user?.lojaId ?? null;
@@ -1626,6 +1845,17 @@ export function Estoque() {
             🔍 <span className="hidden sm:inline">Buscar na Rede</span>
           </button>
 
+          {/* Botão Entrada de Moto */}
+          {podeEntradaMoto && !modoBusca && !modoTransferencias && (
+            <button
+              onClick={() => setShowEntradaMoto(true)}
+              title="Cadastrar entrada manual de moto no estoque"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border transition-colors bg-[#18181b] text-zinc-300 border-[#27272a] hover:border-orange-500 hover:text-orange-400"
+            >
+              🏍️ <span className="hidden sm:inline">+ Entrada de Moto</span>
+            </button>
+          )}
+
           {/* Seletor de empresa (oculto no modo busca e transferências) */}
           {!modoBusca && !modoTransferencias && (
             <div className="min-w-64">
@@ -1684,6 +1914,15 @@ export function Estoque() {
           <p className="text-lg font-medium text-zinc-400">Nenhuma empresa disponível</p>
           <p className="text-sm mt-1">Cadastre lojas no sistema para ver o estoque</p>
         </div>
+      )}
+
+      {showEntradaMoto && (
+        <ModalEntradaMoto
+          lojas={lojasSorted}
+          defaultLojaId={lojaId}
+          onClose={() => setShowEntradaMoto(false)}
+          onSuccess={() => setShowEntradaMoto(false)}
+        />
       )}
     </div>
   );
