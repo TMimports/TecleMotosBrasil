@@ -119,7 +119,6 @@ const menuItems: Record<string, NavEntry[]> = {
     CADASTROS_GROUP,
     VENDAS_GROUP(),
     FIN_GROUP,
-    WHATSAPP_ITEM,
     RELATORIOS_ITEM,
     CONFIG_ITEM,
   ],
@@ -131,14 +130,12 @@ const menuItems: Record<string, NavEntry[]> = {
     COMERCIAL_FIN_GROUP,
     FIN_GROUP,
     item('comissoes', 'Comissões', '💸'),
-    WHATSAPP_ITEM,
     RELATORIOS_ITEM,
   ],
   ADMIN_REDE: [
     item('dashboard', 'Dashboard', '📊'),
     item('usuarios',  'Usuários',  '👥'),
     item('lojas',     'Lojas',     '🏪'),
-    WHATSAPP_ITEM,
     RELATORIOS_ITEM,
   ],
   DONO_LOJA: [
@@ -149,7 +146,6 @@ const menuItems: Record<string, NavEntry[]> = {
     CADASTROS_GROUP,
     VENDAS_GROUP(),
     FIN_GROUP,
-    WHATSAPP_ITEM,
     RELATORIOS_ITEM,
     CONFIG_ITEM,
   ],
@@ -160,7 +156,6 @@ const menuItems: Record<string, NavEntry[]> = {
     CADASTROS_BASE_GROUP,
     VENDAS_GROUP(),
     FIN_GROUP,
-    WHATSAPP_ITEM,
     RELATORIOS_ITEM,
   ],
   VENDEDOR: [
