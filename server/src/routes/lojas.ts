@@ -186,40 +186,122 @@ router.delete('/:id', requireAdminRede, async (req, res) => {
   try {
     const lojaId = Number(req.params.id);
 
-    const vendaIds = (await prisma.venda.findMany({ where: { lojaId }, select: { id: true } })).map(v => v.id);
-    const osIds = (await prisma.ordemServico.findMany({ where: { lojaId }, select: { id: true } })).map(o => o.id);
-
-    if (vendaIds.length > 0) {
-      await prisma.comissao.deleteMany({ where: { vendaId: { in: vendaIds } } });
-      await prisma.contaReceber.deleteMany({ where: { vendaId: { in: vendaIds } } });
-      await prisma.garantia.deleteMany({ where: { vendaId: { in: vendaIds } } });
-      await prisma.itemVenda.deleteMany({ where: { vendaId: { in: vendaIds } } });
-      await prisma.venda.deleteMany({ where: { lojaId } });
+    const loja = await prisma.loja.findUnique({ where: { id: lojaId } });
+    if (!loja) {
+      return res.status(404).json({ error: 'Loja não encontrada' });
     }
 
-    if (osIds.length > 0) {
-      await prisma.comissao.deleteMany({ where: { ordemServicoId: { in: osIds } } });
-      await prisma.itemOS.deleteMany({ where: { ordemServicoId: { in: osIds } } });
-      await prisma.ordemServico.deleteMany({ where: { lojaId } });
+    // Verificar dados críticos que impedem exclusão física irreversível
+    const [
+      vendas, ordensServico, caixa, contasPagar, contasReceber,
+      notasFiscais, transferenciasOrigem, transferenciasDestino,
+      pagamentos, recebimentos, fornecedores, pedidosCompra, contasBancarias
+    ] = await Promise.all([
+      prisma.venda.count({ where: { lojaId, deletedAt: null } }),
+      prisma.ordemServico.count({ where: { lojaId, deletedAt: null } }),
+      prisma.caixa.count({ where: { lojaId } }),
+      prisma.contaPagar.count({ where: { lojaId } }),
+      prisma.contaReceber.count({ where: { lojaId } }),
+      prisma.notaFiscal.count({ where: { lojaId } }),
+      prisma.transferencia.count({ where: { lojaOrigemId: lojaId } }),
+      prisma.transferencia.count({ where: { lojaDestinoId: lojaId } }),
+      prisma.pagamento.count({ where: { lojaId } }),
+      prisma.recebimento.count({ where: { lojaId } }),
+      prisma.fornecedor.count({ where: { lojaId } }),
+      prisma.pedidoCompra.count({ where: { lojaId } }),
+      prisma.contaBancaria.count({ where: { lojaId } }),
+    ]);
+
+    const dadosCriticos = {
+      vendas, ordensServico, caixa, contasPagar, contasReceber,
+      notasFiscais, transferenciasOrigem, transferenciasDestino,
+      pagamentos, recebimentos, fornecedores, pedidosCompra, contasBancarias
+    };
+
+    const totalCritico = Object.values(dadosCriticos).reduce((a, b) => a + b, 0);
+
+    if (totalCritico > 0) {
+      // Bloquear exclusão física — dados fiscais/financeiros/operacionais presentes
+      return res.status(400).json({
+        error: 'Exclusão bloqueada: esta loja possui dados vinculados que impedem a exclusão física.',
+        recomendacao: 'Use a opção ARQUIVAR (PATCH /lojas/:id/arquivar) para inativar a loja preservando o histórico.',
+        preview: {
+          loja: { id: loja.id, nome: loja.nomeFantasia || loja.razaoSocial, cnpj: loja.cnpj },
+          dadosCriticos,
+          totalRegistrosCriticos: totalCritico,
+        }
+      });
     }
 
-    await prisma.logEstoque.deleteMany({ where: { lojaId } });
-    await prisma.estoque.deleteMany({ where: { lojaId } });
-    await prisma.unidadeFisica.deleteMany({ where: { lojaId } });
-    await prisma.caixa.deleteMany({ where: { lojaId } });
-    await prisma.contaReceber.deleteMany({ where: { lojaId } });
-    await prisma.contaPagar.deleteMany({ where: { lojaId } });
-    await prisma.cliente.deleteMany({ where: { lojaId } });
-    await prisma.user.updateMany({
-      where: { lojaId, role: { in: ['ADMIN_GERAL', 'ADMIN_REDE', 'DONO_LOJA'] } },
-      data: { lojaId: null }
-    });
-    await prisma.user.deleteMany({ where: { lojaId } });
+    // Sem dados críticos — verificar dados operacionais menores
+    const [estoques, unidades, logsEstoque, clientes, usuarios] = await Promise.all([
+      prisma.estoque.count({ where: { lojaId } }),
+      prisma.unidadeFisica.count({ where: { lojaId } }),
+      prisma.logEstoque.count({ where: { lojaId } }),
+      prisma.cliente.count({ where: { lojaId } }),
+      prisma.user.count({ where: { lojaId } }),
+    ]);
 
+    const totalOperacional = estoques + unidades + logsEstoque + clientes + usuarios;
+
+    if (totalOperacional > 0) {
+      // Dados operacionais sem histórico fiscal — pode excluir com transação segura
+      await prisma.$transaction(async (tx) => {
+        await tx.logEstoque.deleteMany({ where: { lojaId } });
+        await tx.estoque.deleteMany({ where: { lojaId } });
+        await tx.unidadeFisica.deleteMany({ where: { lojaId } });
+        await tx.cliente.deleteMany({ where: { lojaId } });
+        await tx.user.updateMany({
+          where: { lojaId, role: { in: ['ADMIN_GERAL', 'ADMIN_REDE', 'DONO_LOJA'] } },
+          data: { lojaId: null }
+        });
+        await tx.user.deleteMany({ where: { lojaId } });
+        await tx.loja.delete({ where: { id: lojaId } });
+      });
+
+      return res.json({
+        success: true,
+        message: 'Loja e dados operacionais removidos com sucesso (sem histórico fiscal/financeiro).',
+        removidos: { estoques, unidades, logsEstoque, clientes, usuarios }
+      });
+    }
+
+    // Loja completamente vazia — exclusão direta segura
     await prisma.loja.delete({ where: { id: lojaId } });
-    res.json({ success: true, message: 'Loja e todos os dados vinculados removidos com sucesso' });
+    res.json({ success: true, message: 'Loja removida com sucesso.' });
+
   } catch (error: any) {
     console.error('Erro ao excluir loja:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// Arquivar loja (inativar) — preserva todo o histórico
+router.patch('/:id/arquivar', requireAdminRede, async (req, res) => {
+  try {
+    const lojaId = Number(req.params.id);
+
+    const loja = await prisma.loja.findUnique({ where: { id: lojaId } });
+    if (!loja) {
+      return res.status(404).json({ error: 'Loja não encontrada' });
+    }
+
+    if (!loja.ativo) {
+      return res.status(400).json({ error: 'Loja já está arquivada/inativa.' });
+    }
+
+    const atualizada = await prisma.loja.update({
+      where: { id: lojaId },
+      data: { ativo: false }
+    });
+
+    res.json({
+      success: true,
+      message: `Loja "${atualizada.nomeFantasia || atualizada.razaoSocial}" arquivada com sucesso. Histórico preservado.`,
+      loja: { id: atualizada.id, nomeFantasia: atualizada.nomeFantasia, ativo: atualizada.ativo }
+    });
+  } catch (error: any) {
+    console.error('Erro ao arquivar loja:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

@@ -184,31 +184,70 @@ export function ImportPlanilha({ tipo, onSuccess }: ImportPlanilhaProps) {
           )}
 
           {resultado && (
-            <div className={`p-4 rounded-lg ${resultado.sucesso ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
-              {resultado.sucesso ? (
-                <div>
-                  {(resultado.criados > 0 || resultado.importados > 0) && (
-                    <p className="text-green-400 font-medium">
-                      {resultado.criados || resultado.importados} {tipoLabel[tipo].toLowerCase()} criados!
-                    </p>
-                  )}
-                  {resultado.atualizados > 0 && (
-                    <p className="text-blue-400 font-medium">
-                      {resultado.atualizados} {tipoLabel[tipo].toLowerCase()} atualizados!
-                    </p>
-                  )}
-                  {resultado.criados === 0 && resultado.atualizados === 0 && !resultado.importados && (
-                    <p className="text-yellow-400 font-medium">Nenhum registro processado.</p>
-                  )}
-                  {resultado.erros > 0 && (
-                    <div className="mt-2">
-                      <p className="text-yellow-400 text-sm">{resultado.erros} linhas com erro:</p>
-                      <ul className="text-xs text-gray-400 mt-1 list-disc list-inside">
-                        {resultado.detalhesErros?.map((err: string, i: number) => (
-                          <li key={i}>{err}</li>
-                        ))}
-                      </ul>
-                    </div>
+            <div className={`p-4 rounded-lg ${resultado.sucesso !== false ? 'bg-green-500/20' : 'bg-red-500/20'}`}>
+              {resultado.sucesso !== false ? (
+                <div className="space-y-2">
+                  {/* Modo Lote — Unidades/Chassis */}
+                  {tipo === 'unidades' ? (
+                    <>
+                      <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-1">Resultado — Importação em Lote (Chassis)</p>
+                      {resultado.importados > 0 ? (
+                        <p className="text-green-400 font-medium">{resultado.importados} chassis importados com sucesso</p>
+                      ) : (
+                        <p className="text-yellow-400 font-medium">Nenhum chassis importado.</p>
+                      )}
+                      {resultado.ignorados > 0 && (
+                        <p className="text-yellow-400 text-sm">{resultado.ignorados} linhas ignoradas (chassi duplicado ou produto não encontrado)</p>
+                      )}
+                      {resultado.erros > 0 && (
+                        <p className="text-red-400 text-sm">{resultado.erros} linhas com erro de processamento</p>
+                      )}
+                      {resultado.estoquesAtualizados?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-zinc-600">
+                          <p className="text-xs text-zinc-400 font-medium mb-1">Estoque atualizado:</p>
+                          {resultado.estoquesAtualizados.map((e: any, i: number) => (
+                            <p key={i} className="text-xs text-zinc-300">{e.produto}: <span className="text-green-400">{e.novaQuantidade} unidades</span></p>
+                          ))}
+                        </div>
+                      )}
+                      {resultado.detalhesErros?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-zinc-600">
+                          <p className="text-yellow-400 text-xs font-medium">Detalhes de linhas ignoradas/com erro:</p>
+                          <ul className="text-xs text-gray-400 mt-1 list-disc list-inside space-y-0.5">
+                            {resultado.detalhesErros.map((err: string, i: number) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* Modo Lote — Produtos ou Serviços */
+                    <>
+                      {(resultado.criados > 0 || resultado.importados > 0) && (
+                        <p className="text-green-400 font-medium">
+                          {resultado.criados || resultado.importados} {tipoLabel[tipo].toLowerCase()} criados!
+                        </p>
+                      )}
+                      {resultado.atualizados > 0 && (
+                        <p className="text-blue-400 font-medium">
+                          {resultado.atualizados} {tipoLabel[tipo].toLowerCase()} atualizados!
+                        </p>
+                      )}
+                      {resultado.criados === 0 && resultado.atualizados === 0 && !resultado.importados && (
+                        <p className="text-yellow-400 font-medium">Nenhum registro processado.</p>
+                      )}
+                      {resultado.erros > 0 && (
+                        <div className="mt-2">
+                          <p className="text-yellow-400 text-sm">{resultado.erros} linhas com erro:</p>
+                          <ul className="text-xs text-gray-400 mt-1 list-disc list-inside">
+                            {resultado.detalhesErros?.map((err: string, i: number) => (
+                              <li key={i}>{err}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               ) : (

@@ -639,7 +639,7 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
                   {selectedLoja ? selectedLoja.nomeFantasia : 'Visão Consolidada'}
                 </span>
                 {lojas.length > 0 && (
-                  <span className="text-[10px] text-zinc-500 ml-0.5">({lojas.length} unid.)</span>
+                  <span className="text-[10px] text-zinc-500 ml-0.5">({lojas.length} {lojas.length === 1 ? 'loja' : 'lojas'})</span>
                 )}
                 <svg className="w-3.5 h-3.5 text-zinc-400 group-hover:text-zinc-200 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />

@@ -2,7 +2,12 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { prisma } from '../index.js';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken, AuthRequest } from '../middleware/auth.js';
+
+/** Normaliza nome de produto para comparação: remove espaços, hífens e converte a maiúsculo */
+function normalizarNomeProduto(nome: string): string {
+  return nome.trim().toUpperCase().replace(/[\s\-_]+/g, '');
+}
 
 const router = Router();
 
@@ -225,7 +230,7 @@ router.post('/servicos', verifyToken, upload.single('arquivo'), async (req, res)
   }
 });
 
-router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res) => {
+router.post('/unidades', verifyToken, upload.single('arquivo'), async (req: AuthRequest, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Nenhum arquivo enviado' });
@@ -233,7 +238,15 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
 
     const { lojaId } = req.body;
     if (!lojaId) {
-      return res.status(400).json({ error: 'Loja e obrigatoria' });
+      return res.status(400).json({ error: 'Loja é obrigatória' });
+    }
+
+    const lojaIdNum = parseInt(lojaId);
+    const usuarioId = req.user!.id;
+
+    const loja = await prisma.loja.findUnique({ where: { id: lojaIdNum } });
+    if (!loja) {
+      return res.status(400).json({ error: 'Loja não encontrada' });
     }
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -241,62 +254,147 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
     const sheet = workbook.Sheets[sheetName];
     const dados = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-    const unidades: any[] = [];
-    let erros: string[] = [];
+    // Buscar todos os produtos MOTO uma vez para normalização de nome
+    const todosMoto = await prisma.produto.findMany({ where: { tipo: 'MOTO' } });
+
+    const importados: Array<{ chassi: string; produto: string; linha: number }> = [];
+    const ignorados: Array<{ chassi?: string; produto?: string; linha: number; motivo: string }> = [];
+    const erros: Array<{ linha: number; motivo: string }> = [];
+    const estoquesAtualizados: Array<{ produto: string; lojaId: number; novaQuantidade: number }> = [];
 
     for (let i = 1; i < dados.length; i++) {
       const row = dados[i];
-      if (!row || !row[0]) continue;
+      if (!row || (!row[0] && !row[2])) continue;
 
-      const produtoNome = String(row[0] || '').trim();
+      const produtoNomeBruto = String(row[0] || '').trim();
       const cor = String(row[1] || '').trim();
-      const chassi = String(row[2] || '').trim();
-      const motor = String(row[3] || '').trim();
+      const chassi = String(row[2] || '').trim().toUpperCase();
+      const motor = String(row[3] || '').trim().toUpperCase();
       const ano = parseInt(row[4]) || new Date().getFullYear();
 
-      const produto = await prisma.produto.findFirst({ 
-        where: { nome: { contains: produtoNome }, tipo: 'MOTO' } 
-      });
-
-      if (!produto) {
-        erros.push(`Linha ${i + 1}: Produto "${produtoNome}" nao encontrado`);
+      if (!produtoNomeBruto) {
+        erros.push({ linha: i + 1, motivo: 'Nome do produto vazio' });
         continue;
       }
 
-      if (chassi) {
-        const chassiExistente = await prisma.unidadeFisica.findFirst({ where: { chassi } });
-        if (chassiExistente) {
-          erros.push(`Linha ${i + 1}: Chassi "${chassi}" ja cadastrado`);
-          continue;
-        }
+      if (!chassi) {
+        ignorados.push({ produto: produtoNomeBruto, linha: i + 1, motivo: 'Chassi não informado' });
+        continue;
       }
 
+      // Busca de produto: 1) nome exato, 2) nome normalizado, 3) contains
+      const normBusca = normalizarNomeProduto(produtoNomeBruto);
+      let produto =
+        todosMoto.find(p => p.nome === produtoNomeBruto) ||
+        todosMoto.find(p => normalizarNomeProduto(p.nome) === normBusca) ||
+        todosMoto.find(p => p.nome.toLowerCase().includes(produtoNomeBruto.toLowerCase())) ||
+        null;
+
+      if (!produto) {
+        ignorados.push({
+          chassi,
+          produto: produtoNomeBruto,
+          linha: i + 1,
+          motivo: `Produto "${produtoNomeBruto}" não encontrado. Cadastre o produto antes de importar.`
+        });
+        continue;
+      }
+
+      // Gerar numeroSerie antes da transação para não misturar clientes prisma
       const numeroSerie = await gerarNumeroSerieUnidade();
 
-      const unidade = await prisma.unidadeFisica.create({
-        data: {
-          produtoId: produto.id,
-          lojaId: parseInt(lojaId),
-          cor: cor || null,
-          chassi: chassi || null,
-          codigoMotor: motor || null,
-          ano,
-          numeroSerie,
-          status: 'ESTOQUE'
-        }
-      });
+      // Cada linha é atômica: UnidadeFisica + Estoque + LogEstoque juntos ou nenhum
+      try {
+        const resultado = await prisma.$transaction(async (tx) => {
+          const chassiExistente = await tx.unidadeFisica.findFirst({ where: { chassi } });
+          if (chassiExistente) {
+            return { ok: false, motivo: `Chassi "${chassi}" já está cadastrado` };
+          }
 
-      unidades.push(unidade);
+          await tx.unidadeFisica.create({
+            data: {
+              produtoId: produto!.id,
+              lojaId: lojaIdNum,
+              cor: cor || null,
+              chassi,
+              codigoMotor: motor || null,
+              ano,
+              numeroSerie,
+              status: 'ESTOQUE',
+              createdBy: usuarioId,
+            }
+          });
+
+          const estoqueAtual = await tx.estoque.findUnique({
+            where: { produtoId_lojaId: { produtoId: produto!.id, lojaId: lojaIdNum } }
+          });
+
+          const qtdAnterior = estoqueAtual?.quantidade ?? 0;
+          const qtdNova = qtdAnterior + 1;
+
+          if (estoqueAtual) {
+            await tx.estoque.update({
+              where: { id: estoqueAtual.id },
+              data: { quantidade: qtdNova }
+            });
+          } else {
+            await tx.estoque.create({
+              data: { produtoId: produto!.id, lojaId: lojaIdNum, quantidade: 1 }
+            });
+          }
+
+          await tx.logEstoque.create({
+            data: {
+              tipo: 'ENTRADA',
+              origem: 'IMPORTACAO_PLANILHA',
+              produtoId: produto!.id,
+              lojaId: lojaIdNum,
+              quantidade: 1,
+              quantidadeAnterior: qtdAnterior,
+              quantidadeNova: qtdNova,
+              usuarioId,
+            }
+          });
+
+          return { ok: true, novaQuantidade: qtdNova };
+        });
+
+        if (resultado.ok) {
+          importados.push({ chassi, produto: produto.nome, linha: i + 1 });
+          const idx = estoquesAtualizados.findIndex(
+            e => e.produto === produto!.nome && e.lojaId === lojaIdNum
+          );
+          if (idx >= 0) {
+            estoquesAtualizados[idx].novaQuantidade = resultado.novaQuantidade!;
+          } else {
+            estoquesAtualizados.push({ produto: produto.nome, lojaId: lojaIdNum, novaQuantidade: resultado.novaQuantidade! });
+          }
+        } else {
+          ignorados.push({ chassi, produto: produto.nome, linha: i + 1, motivo: resultado.motivo! });
+        }
+      } catch (txErr: any) {
+        erros.push({ linha: i + 1, motivo: txErr?.message || 'Erro ao processar linha' });
+      }
     }
 
     res.json({
       sucesso: true,
-      importados: unidades.length,
+      importados: importados.length,
+      ignorados: ignorados.length,
       erros: erros.length,
-      detalhesErros: erros.slice(0, 10)
+      detalhes: {
+        criados: importados.slice(0, 50),
+        ignorados: ignorados.slice(0, 50),
+        erros: erros.slice(0, 20),
+      },
+      estoquesAtualizados,
+      detalhesErros: [
+        ...ignorados.map(i => `Linha ${i.linha}: ${i.motivo}`),
+        ...erros.map(e => `Linha ${e.linha}: ${e.motivo}`)
+      ].slice(0, 15)
     });
   } catch (error: any) {
-    console.error('Erro na importacao:', error);
+    console.error('Erro na importacao de unidades:', error);
     res.status(500).json({ error: error.message });
   }
 });
