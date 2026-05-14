@@ -249,28 +249,38 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req: Auth
       return res.status(400).json({ error: 'Loja não encontrada' });
     }
 
+    // Margem padrão para produtos auto-criados
+    const config = await prisma.configuracao.findFirst();
+    const margemMoto = config ? Number(config.lucroMoto) : 30;
+
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
     const dados = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-    // Buscar todos os produtos MOTO uma vez para normalização de nome
-    const todosMoto = await prisma.produto.findMany({ where: { tipo: 'MOTO' } });
+    // Cache de produtos MOTO — mutado quando auto-criamos novos
+    const todosMoto: any[] = await prisma.produto.findMany({ where: { tipo: 'MOTO' } });
+    // Produtos criados nesta importação: normNome → produto (atualizado só após tx bem-sucedida)
+    const criadosNestaImportacao = new Map<string, any>();
 
-    const importados: Array<{ chassi: string; produto: string; linha: number }> = [];
+    type OrigemProduto = 'encontrado' | 'similar' | 'criado_auto';
+
+    const importados: Array<{ chassi: string; produto: string; linha: number; origemProduto: OrigemProduto }> = [];
     const ignorados: Array<{ chassi?: string; produto?: string; linha: number; motivo: string }> = [];
     const erros: Array<{ linha: number; motivo: string }> = [];
     const estoquesAtualizados: Array<{ produto: string; lojaId: number; novaQuantidade: number }> = [];
+    const produtosCriadosAuto: string[] = [];
+    const produtosSimilaresUsados: Array<{ nomePlanilha: string; nomeCadastro: string }> = [];
 
     for (let i = 1; i < dados.length; i++) {
       const row = dados[i];
       if (!row || (!row[0] && !row[2])) continue;
 
       const produtoNomeBruto = String(row[0] || '').trim();
-      const cor = String(row[1] || '').trim();
-      const chassi = String(row[2] || '').trim().toUpperCase();
-      const motor = String(row[3] || '').trim().toUpperCase();
-      const ano = parseInt(row[4]) || new Date().getFullYear();
+      const cor              = String(row[1] || '').trim();
+      const chassi           = String(row[2] || '').trim().toUpperCase();
+      const motor            = String(row[3] || '').trim().toUpperCase();
+      const ano              = parseInt(row[4]) || new Date().getFullYear();
 
       if (!produtoNomeBruto) {
         erros.push({ linha: i + 1, motivo: 'Nome do produto vazio' });
@@ -282,95 +292,160 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req: Auth
         continue;
       }
 
-      // Busca de produto: 1) nome exato, 2) nome normalizado, 3) contains
+      // ── Resolução do produto ─────────────────────────────────────────────────
       const normBusca = normalizarNomeProduto(produtoNomeBruto);
-      let produto =
-        todosMoto.find(p => p.nome === produtoNomeBruto) ||
-        todosMoto.find(p => normalizarNomeProduto(p.nome) === normBusca) ||
-        todosMoto.find(p => p.nome.toLowerCase().includes(produtoNomeBruto.toLowerCase())) ||
-        null;
+      let produto: any = null;
+      let origemProduto: OrigemProduto = 'encontrado';
+      let nomeLimpo = produtoNomeBruto.replace(/\s+/g, ' ').trim(); // nome a ser usado na criação
 
+      // 1. Cache desta importação (evita duplicar produto criado em linhas anteriores)
+      produto = criadosNestaImportacao.get(normBusca) ?? null;
+
+      // 2. Nome exato
       if (!produto) {
-        ignorados.push({
-          chassi,
-          produto: produtoNomeBruto,
-          linha: i + 1,
-          motivo: `Produto "${produtoNomeBruto}" não encontrado. Cadastre o produto antes de importar.`
-        });
-        continue;
+        produto = todosMoto.find((p: any) => p.nome === produtoNomeBruto) ?? null;
       }
 
-      // Gerar numeroSerie antes da transação para não misturar clientes prisma
-      const numeroSerie = await gerarNumeroSerieUnidade();
+      // 3. Nome normalizado exato: TM11 = TM 11 = TM-11 = TM_11
+      if (!produto) {
+        const achado = todosMoto.find((p: any) => normalizarNomeProduto(p.nome) === normBusca);
+        if (achado) {
+          produto = achado;
+          origemProduto = 'similar';
+          produtosSimilaresUsados.push({ nomePlanilha: produtoNomeBruto, nomeCadastro: achado.nome });
+        }
+      }
 
-      // Cada linha é atômica: UnidadeFisica + Estoque + LogEstoque juntos ou nenhum
+      // 4. Similaridade forte: um normalizado contém o outro E razão de comprimento ≥ 0.6
+      if (!produto) {
+        const achado = todosMoto.find((p: any) => {
+          const normP   = normalizarNomeProduto(p.nome);
+          const menor   = normBusca.length <= normP.length ? normBusca : normP;
+          const maior   = normBusca.length >  normP.length ? normBusca : normP;
+          return maior.includes(menor) && (menor.length / maior.length) >= 0.6;
+        });
+        if (achado) {
+          produto = achado;
+          origemProduto = 'similar';
+          const jaReg = produtosSimilaresUsados.find(
+            s => s.nomePlanilha === produtoNomeBruto && s.nomeCadastro === achado.nome
+          );
+          if (!jaReg) produtosSimilaresUsados.push({ nomePlanilha: produtoNomeBruto, nomeCadastro: achado.nome });
+        }
+      }
+
+      // 5. Nenhum similar → criar automaticamente
+      if (!produto) {
+        origemProduto = 'criado_auto';
+      }
+
+      // Gerar códigos fora da transação (usa prisma global, não tx)
+      const numeroSerie = await gerarNumeroSerieUnidade();
+      const codigoProdutoNovo = origemProduto === 'criado_auto'
+        ? await gerarCodigoProduto('MOTO')
+        : '';
+
+      // ── Transação atômica por linha ──────────────────────────────────────────
+      // Se produto for criado + chassi duplicado → ambos fazem rollback (sem produto órfão)
       try {
         const resultado = await prisma.$transaction(async (tx) => {
-          const chassiExistente = await tx.unidadeFisica.findFirst({ where: { chassi } });
-          if (chassiExistente) {
-            return { ok: false, motivo: `Chassi "${chassi}" já está cadastrado` };
+          let produtoId: number;
+          let produtoNomeFinal: string;
+          let produtoCriado: any = null;
+
+          if (origemProduto === 'criado_auto') {
+            produtoCriado = await tx.produto.create({
+              data: {
+                codigo:          codigoProdutoNovo,
+                nome:            nomeLimpo,
+                tipo:            'MOTO',
+                custo:           0,
+                percentualLucro: margemMoto,
+                preco:           0,
+                ativo:           true,
+                descricao:       'Criado automaticamente via importação de planilha',
+              }
+            });
+            produtoId        = produtoCriado.id;
+            produtoNomeFinal = produtoCriado.nome;
+          } else {
+            produtoId        = produto.id;
+            produtoNomeFinal = produto.nome;
           }
 
+          // Verificar chassi duplicado
+          const chassiExistente = await tx.unidadeFisica.findFirst({ where: { chassi } });
+          if (chassiExistente) {
+            // Se chegou aqui com produtoCriado, o produto também sofre rollback automaticamente
+            return { ok: false as const, motivo: `Chassi "${chassi}" já está cadastrado`, produtoNomeFinal, produtoCriado: null };
+          }
+
+          // Criar UnidadeFisica
           await tx.unidadeFisica.create({
             data: {
-              produtoId: produto!.id,
+              produtoId,
               lojaId: lojaIdNum,
-              cor: cor || null,
+              cor:          cor   || null,
               chassi,
-              codigoMotor: motor || null,
+              codigoMotor:  motor || null,
               ano,
               numeroSerie,
-              status: 'ESTOQUE',
+              status:    'ESTOQUE',
               createdBy: usuarioId,
             }
           });
 
+          // Upsert Estoque
           const estoqueAtual = await tx.estoque.findUnique({
-            where: { produtoId_lojaId: { produtoId: produto!.id, lojaId: lojaIdNum } }
+            where: { produtoId_lojaId: { produtoId, lojaId: lojaIdNum } }
           });
-
           const qtdAnterior = estoqueAtual?.quantidade ?? 0;
-          const qtdNova = qtdAnterior + 1;
+          const qtdNova     = qtdAnterior + 1;
 
           if (estoqueAtual) {
-            await tx.estoque.update({
-              where: { id: estoqueAtual.id },
-              data: { quantidade: qtdNova }
-            });
+            await tx.estoque.update({ where: { id: estoqueAtual.id }, data: { quantidade: qtdNova } });
           } else {
-            await tx.estoque.create({
-              data: { produtoId: produto!.id, lojaId: lojaIdNum, quantidade: 1 }
-            });
+            await tx.estoque.create({ data: { produtoId, lojaId: lojaIdNum, quantidade: 1 } });
           }
 
+          // Log de movimentação
           await tx.logEstoque.create({
             data: {
-              tipo: 'ENTRADA',
-              origem: 'IMPORTACAO_PLANILHA',
-              produtoId: produto!.id,
-              lojaId: lojaIdNum,
-              quantidade: 1,
+              tipo:               'ENTRADA',
+              origem:             'IMPORTACAO_PLANILHA',
+              produtoId,
+              lojaId:             lojaIdNum,
+              quantidade:         1,
               quantidadeAnterior: qtdAnterior,
-              quantidadeNova: qtdNova,
+              quantidadeNova:     qtdNova,
               usuarioId,
             }
           });
 
-          return { ok: true, novaQuantidade: qtdNova };
+          return { ok: true as const, novaQuantidade: qtdNova, produtoNomeFinal, produtoCriado };
         });
 
         if (resultado.ok) {
-          importados.push({ chassi, produto: produto.nome, linha: i + 1 });
-          const idx = estoquesAtualizados.findIndex(
-            e => e.produto === produto!.nome && e.lojaId === lojaIdNum
-          );
+          const nomeUsado = resultado.produtoNomeFinal;
+          importados.push({ chassi, produto: nomeUsado, linha: i + 1, origemProduto });
+
+          // Só atualizar cache APÓS transação confirmada — evita usar ID de produto revertido
+          if (resultado.produtoCriado) {
+            criadosNestaImportacao.set(normBusca, resultado.produtoCriado);
+            todosMoto.push(resultado.produtoCriado);
+            if (!produtosCriadosAuto.includes(nomeUsado)) {
+              produtosCriadosAuto.push(nomeUsado);
+            }
+          }
+
+          const idx = estoquesAtualizados.findIndex(e => e.produto === nomeUsado && e.lojaId === lojaIdNum);
           if (idx >= 0) {
-            estoquesAtualizados[idx].novaQuantidade = resultado.novaQuantidade!;
+            estoquesAtualizados[idx].novaQuantidade = resultado.novaQuantidade;
           } else {
-            estoquesAtualizados.push({ produto: produto.nome, lojaId: lojaIdNum, novaQuantidade: resultado.novaQuantidade! });
+            estoquesAtualizados.push({ produto: nomeUsado, lojaId: lojaIdNum, novaQuantidade: resultado.novaQuantidade });
           }
         } else {
-          ignorados.push({ chassi, produto: produto.nome, linha: i + 1, motivo: resultado.motivo! });
+          ignorados.push({ chassi, produto: resultado.produtoNomeFinal, linha: i + 1, motivo: resultado.motivo });
         }
       } catch (txErr: any) {
         erros.push({ linha: i + 1, motivo: txErr?.message || 'Erro ao processar linha' });
@@ -378,20 +453,23 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req: Auth
     }
 
     res.json({
-      sucesso: true,
-      importados: importados.length,
-      ignorados: ignorados.length,
-      erros: erros.length,
-      detalhes: {
-        criados: importados.slice(0, 50),
-        ignorados: ignorados.slice(0, 50),
-        erros: erros.slice(0, 20),
-      },
+      sucesso:                true,
+      importados:             importados.length,
+      ignorados:              ignorados.length,
+      erros:                  erros.length,
+      produtosEncontrados:    [...new Set(importados.filter(i => i.origemProduto === 'encontrado').map(i => i.produto))],
+      produtosCriadosAuto,
+      produtosSimilaresUsados,
       estoquesAtualizados,
+      detalhes: {
+        criados:   importados.slice(0, 50),
+        ignorados: ignorados.slice(0, 50),
+        erros:     erros.slice(0, 20),
+      },
       detalhesErros: [
         ...ignorados.map(i => `Linha ${i.linha}: ${i.motivo}`),
         ...erros.map(e => `Linha ${e.linha}: ${e.motivo}`)
-      ].slice(0, 15)
+      ].slice(0, 15),
     });
   } catch (error: any) {
     console.error('Erro na importacao de unidades:', error);

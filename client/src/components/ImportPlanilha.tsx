@@ -190,30 +190,73 @@ export function ImportPlanilha({ tipo, onSuccess }: ImportPlanilhaProps) {
                   {/* Modo Lote — Unidades/Chassis */}
                   {tipo === 'unidades' ? (
                     <>
-                      <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-1">Resultado — Importação em Lote (Chassis)</p>
-                      {resultado.importados > 0 ? (
-                        <p className="text-green-400 font-medium">{resultado.importados} chassis importados com sucesso</p>
-                      ) : (
-                        <p className="text-yellow-400 font-medium">Nenhum chassis importado.</p>
+                      <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-medium mb-2">Resultado — Importação em Lote (Chassis)</p>
+
+                      {/* Contadores principais */}
+                      <div className="grid grid-cols-3 gap-2 mb-2">
+                        <div className="bg-zinc-800 rounded p-2 text-center">
+                          <p className="text-green-400 font-bold text-lg">{resultado.importados || 0}</p>
+                          <p className="text-xs text-zinc-400">Importados</p>
+                        </div>
+                        <div className="bg-zinc-800 rounded p-2 text-center">
+                          <p className={`font-bold text-lg ${resultado.ignorados > 0 ? 'text-yellow-400' : 'text-zinc-500'}`}>{resultado.ignorados || 0}</p>
+                          <p className="text-xs text-zinc-400">Ignorados</p>
+                        </div>
+                        <div className="bg-zinc-800 rounded p-2 text-center">
+                          <p className={`font-bold text-lg ${resultado.erros > 0 ? 'text-red-400' : 'text-zinc-500'}`}>{resultado.erros || 0}</p>
+                          <p className="text-xs text-zinc-400">Erros</p>
+                        </div>
+                      </div>
+
+                      {resultado.importados === 0 && (
+                        <p className="text-yellow-400 text-sm">Nenhum chassis foi importado.</p>
                       )}
-                      {resultado.ignorados > 0 && (
-                        <p className="text-yellow-400 text-sm">{resultado.ignorados} linhas ignoradas (chassi duplicado ou produto não encontrado)</p>
-                      )}
-                      {resultado.erros > 0 && (
-                        <p className="text-red-400 text-sm">{resultado.erros} linhas com erro de processamento</p>
-                      )}
-                      {resultado.estoquesAtualizados?.length > 0 && (
+
+                      {/* Produtos encontrados no cadastro */}
+                      {resultado.produtosEncontrados?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-zinc-600">
-                          <p className="text-xs text-zinc-400 font-medium mb-1">Estoque atualizado:</p>
-                          {resultado.estoquesAtualizados.map((e: any, i: number) => (
-                            <p key={i} className="text-xs text-zinc-300">{e.produto}: <span className="text-green-400">{e.novaQuantidade} unidades</span></p>
+                          <p className="text-xs text-zinc-300 font-medium mb-1">Produtos encontrados no cadastro ({resultado.produtosEncontrados.length}):</p>
+                          {resultado.produtosEncontrados.map((nome: string, i: number) => (
+                            <p key={i} className="text-xs text-zinc-400">• {nome}</p>
                           ))}
                         </div>
                       )}
+
+                      {/* Produtos similares usados */}
+                      {resultado.produtosSimilaresUsados?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-zinc-600">
+                          <p className="text-xs text-blue-400 font-medium mb-1">Produtos similares usados ({resultado.produtosSimilaresUsados.length}):</p>
+                          {resultado.produtosSimilaresUsados.map((s: any, i: number) => (
+                            <p key={i} className="text-xs text-zinc-400">• Planilha: <span className="text-zinc-300">"{s.nomePlanilha}"</span> → Cadastro: <span className="text-blue-300">"{s.nomeCadastro}"</span></p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Produtos criados automaticamente */}
+                      {resultado.produtosCriadosAuto?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-zinc-600">
+                          <p className="text-xs text-orange-400 font-medium mb-1">Produtos criados automaticamente ({resultado.produtosCriadosAuto.length}):</p>
+                          {resultado.produtosCriadosAuto.map((nome: string, i: number) => (
+                            <p key={i} className="text-xs text-zinc-400">• <span className="text-orange-300">{nome}</span> <span className="text-zinc-500">(tipo MOTO, custo=0 — edite o produto para ajustar valores)</span></p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Estoque atualizado */}
+                      {resultado.estoquesAtualizados?.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-zinc-600">
+                          <p className="text-xs text-zinc-300 font-medium mb-1">Estoque atualizado:</p>
+                          {resultado.estoquesAtualizados.map((e: any, i: number) => (
+                            <p key={i} className="text-xs text-zinc-400">{e.produto}: <span className="text-green-400 font-medium">{e.novaQuantidade} unidades</span></p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Linhas ignoradas/com erro */}
                       {resultado.detalhesErros?.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-zinc-600">
-                          <p className="text-yellow-400 text-xs font-medium">Detalhes de linhas ignoradas/com erro:</p>
-                          <ul className="text-xs text-gray-400 mt-1 list-disc list-inside space-y-0.5">
+                          <p className="text-yellow-400 text-xs font-medium mb-1">Linhas ignoradas / com erro:</p>
+                          <ul className="text-xs text-gray-400 space-y-0.5 list-disc list-inside">
                             {resultado.detalhesErros.map((err: string, i: number) => (
                               <li key={i}>{err}</li>
                             ))}
