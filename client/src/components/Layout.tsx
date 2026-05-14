@@ -38,7 +38,7 @@ function group(id: string, label: string, icon: string, items: Omit<NavItem, 'ty
   return { type: 'group', id, label, icon, items };
 }
 
-// Vendas group — Clientes incluídos dentro; Fornecedores movido para Financeiro (CRM)
+// Vendas group — Clientes incluídos dentro; Fornecedores no grupo Financeiro
 const VENDAS_GROUP = (vendorLabel = 'Vendas') =>
   group('vendas-group', vendorLabel, '💰', [
     { id: 'clientes',      label: 'Clientes',                                               icon: '👤' },

@@ -294,12 +294,12 @@ export function Vendas() {
   const calcularTotal = () => {
     const totalPecas = itensSelecionados.reduce((acc, item) => {
       const sub = item.preco * item.quantidade;
-      const descontoV = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+      const descontoV = isCartao ? 0 : Math.round((parseFloat(item.descontoValor) || 0) * 100) / 100;
       return acc + Math.round((sub - descontoV) * 100) / 100;
     }, 0);
     const totalMotos = motosSelecionadas.reduce((acc, item) => {
       const sub = item.preco * item.quantidade;
-      const descontoV = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+      const descontoV = isCartao ? 0 : Math.round((parseFloat(item.descontoValor) || 0) * 100) / 100;
       return acc + Math.round((sub - descontoV) * 100) / 100;
     }, 0);
     return Math.round((totalPecas + totalMotos) * 100) / 100;
@@ -598,7 +598,7 @@ export function Vendas() {
               <div className="mt-3 pt-3 border-t border-zinc-700 flex justify-between items-center">
                 <span className="text-gray-500 text-sm">Valor Total</span>
                 <span className="text-xl font-bold text-green-400">
-                  R$ {Number(venda.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {Number(venda.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -940,24 +940,24 @@ export function Vendas() {
               <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                 {motosSelecionadas.filter(m => m.produtoId).map((item, idx) => {
                   const subtotal = item.preco * item.quantidade;
-                  const descontoV = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+                  const descontoV = isCartao ? 0 : Math.round((parseFloat(item.descontoValor) || 0) * 100) / 100;
                   const finalItem = Math.round((subtotal - descontoV) * 100) / 100;
                   return (
                     <div key={`m-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{item.displayName || 'Moto'}</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       {descontoV > 0 && (
                         <div className="flex justify-between mt-1">
                           <span className="text-gray-500">Desconto ({parseFloat(item.desconto).toFixed(2)}%):</span>
-                          <span className="text-red-400">- R$ {descontoV.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-red-400">- R$ {descontoV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                       {descontoV > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -967,24 +967,24 @@ export function Vendas() {
                   const produto = produtos.find(p => p.id === parseInt(item.produtoId));
                   const nomeExibicao = produto?.nome || 'Peca';
                   const subtotal = item.preco * item.quantidade;
-                  const descontoV = isCartao ? 0 : (parseFloat(item.descontoValor) || 0);
+                  const descontoV = isCartao ? 0 : Math.round((parseFloat(item.descontoValor) || 0) * 100) / 100;
                   const finalItem = Math.round((subtotal - descontoV) * 100) / 100;
                   return (
                     <div key={`p-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{nomeExibicao} (x{item.quantidade})</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                       {descontoV > 0 && (
                         <div className="flex justify-between mt-1">
                           <span className="text-gray-500">Desconto ({parseFloat(item.desconto).toFixed(2)}%):</span>
-                          <span className="text-red-400">- R$ {descontoV.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-red-400">- R$ {descontoV.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                       {descontoV > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -1000,7 +1000,7 @@ export function Vendas() {
                   <p className="text-xs text-green-700 mt-0.5">Valor exato a cobrar na maquina/cartao</p>
                 </div>
                 <span className="text-3xl font-black text-green-400">
-                  R$ {calcularTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {calcularTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -1056,8 +1056,8 @@ export function Vendas() {
               <tbody>
                 {vendaDetalhada?.itens?.map((item, i) => {
                   const desc = Number(item.desconto || 0);
-                  const subtotalBruto = Number(item.precoUnitario) * item.quantidade;
-                  const subtotalFinal = subtotalBruto * (1 - desc / 100);
+                  const subtotalBruto = Math.round(Number(item.precoUnitario) * item.quantidade * 100) / 100;
+                  const subtotalFinal = Math.round(subtotalBruto * (1 - desc / 100) * 100) / 100;
                   return (
                     <tr key={i} className="border-b border-zinc-800">
                       <td className="p-2">{item.produto?.nome}</td>
@@ -1091,17 +1091,17 @@ export function Vendas() {
                 <>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Subtotal:</span>
-                    <span>R$ {Number(vendaDetalhada.valorBruto).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span>R$ {Number(vendaDetalhada.valorBruto).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-400">Desconto ({((1 - Number(vendaDetalhada.valorTotal) / Number(vendaDetalhada.valorBruto)) * 100).toFixed(1)}%):</span>
-                    <span className="text-red-400">- R$ {(Number(vendaDetalhada.valorBruto) - Number(vendaDetalhada.valorTotal)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-red-400">- R$ {(Number(vendaDetalhada.valorBruto) - Number(vendaDetalhada.valorTotal)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </>
               )}
               <div className="flex justify-between text-lg font-bold">
                 <span className="text-gray-400">Total:</span>
-                <span className="text-green-400">R$ {Number(vendaDetalhada?.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                <span className="text-green-400">R$ {Number(vendaDetalhada?.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
