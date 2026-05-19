@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path . -Directory)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\" -Force -ErrorAction SilentlyContinue)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\client\\\\src\\\\pages\" -Filter \"*.tsx\" -ErrorAction SilentlyContinue)",
+      "Bash(git checkout *)",
+      "PowerShell(git branch *)",
+      "PowerShell(git checkout *)",
+      "PowerShell(npm install *)",
+      "PowerShell(npx prisma@5.22.0 generate --schema server/prisma/schema.prisma 2>&1)",
+      "PowerShell(npm run *)",
+      "PowerShell(git add *)"
+    ]
+  }
+}
