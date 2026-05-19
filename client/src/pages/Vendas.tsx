@@ -84,6 +84,7 @@ interface ItemMoto {
   descontoValor: string;
   chassi: string;
   motor: string;
+  cor: string;
   displayName: string;
 }
 
@@ -261,7 +262,7 @@ export function Vendas() {
   };
 
   const adicionarMoto = () => {
-    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', displayName: '' }]);
+    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', cor: '', displayName: '' }]);
   };
 
   const removerMoto = (index: number) => {
@@ -273,16 +274,16 @@ export function Vendas() {
     if (field === 'produtoId') {
       const produto = produtos.find(p => p.id === parseInt(value));
       if (produto) {
-        const unidade = unidadesDisponiveis.find(u => u.produtoId === produto.id);
         novas[index] = {
           ...novas[index],
           produtoId: value,
           preco: produto.preco,
           desconto: '0',
           descontoValor: '0',
-          unidadeId: unidade ? String(unidade.id) : '',
-          chassi: unidade?.chassi || '',
-          motor: unidade?.codigoMotor || '',
+          unidadeId: '',
+          chassi: '',
+          motor: '',
+          cor: '',
           displayName: produto.nome
         };
       }
@@ -293,10 +294,11 @@ export function Vendas() {
           ...novas[index],
           unidadeId: value,
           chassi: unidade.chassi || '',
-          motor: unidade.codigoMotor || ''
+          motor: unidade.codigoMotor || '',
+          cor: unidade.cor || ''
         };
       } else {
-        novas[index] = { ...novas[index], unidadeId: '', chassi: '', motor: '' };
+        novas[index] = { ...novas[index], unidadeId: '', chassi: '', motor: '', cor: '' };
       }
     } else if (field === 'desconto') {
       // % → calcula valor fixo
@@ -397,7 +399,17 @@ export function Vendas() {
 
     const motosIncompletas = motosSemDadosCompletos();
     if (motosIncompletas.length > 0) {
-      setFormErro(`🏍️ Selecione a unidade (chassi) para ${motosIncompletas.length} moto(s). Use o dropdown para preencher automaticamente.`);
+      setFormErro(`🏍️ Selecione a unidade física (chassi) para ${motosIncompletas.length} moto(s) usando o dropdown de unidades.`);
+      return;
+    }
+
+    const motosSerUnidade = motosSelecionadas.filter(item => {
+      if (!item.produtoId) return false;
+      const temUnidade = unidadesDisponiveis.some(u => u.produtoId === parseInt(item.produtoId));
+      return temUnidade && !item.unidadeId;
+    });
+    if (motosSerUnidade.length > 0) {
+      setFormErro(`🏍️ Selecione a unidade física para ${motosSerUnidade.length} moto(s). Escolha o chassi no dropdown.`);
       return;
     }
 
@@ -1158,7 +1170,7 @@ export function Vendas() {
                           </div>
                         )}
                         {item.unidadeId ? (
-                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <div>
                               <label className="text-xs text-gray-400">Chassi</label>
                               <div className="input bg-zinc-900/60 text-green-400 font-mono text-sm flex items-center gap-1">
@@ -1179,32 +1191,19 @@ export function Vendas() {
                                 </div>
                               )}
                             </div>
-                          </div>
-                        ) : unidadesDoModelo.length === 0 && (
-                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <div>
-                              <label className="text-xs text-gray-400">Numero do Chassi *</label>
-                              <input
-                                type="text"
-                                value={item.chassi || ''}
-                                onChange={(e) => atualizarMoto(index, 'chassi', e.target.value)}
-                                className="input"
-                                placeholder="Ex: 9C6KE0810PR000000"
-                                required
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-400">Numero do Motor</label>
-                              <input
-                                type="text"
-                                value={item.motor || ''}
-                                onChange={(e) => atualizarMoto(index, 'motor', e.target.value)}
-                                className="input"
-                                placeholder="Ex: E3K6E0000000"
-                              />
+                              <label className="text-xs text-gray-400">Cor</label>
+                              <div className="input bg-zinc-900/60 text-green-400 font-mono text-sm flex items-center gap-1">
+                                <span className="text-green-500 shrink-0">✓</span>
+                                {item.cor || '—'}
+                              </div>
                             </div>
                           </div>
-                        )}
+                        ) : unidadesDoModelo.length === 0 ? (
+                          <div className="mt-3 p-3 bg-red-900/20 border border-red-600/40 rounded-lg text-sm text-red-400">
+                            ⚠ Nenhuma unidade disponível para este modelo nesta loja.
+                          </div>
+                        ) : null}
                       </>
                     )}
                   </div>
