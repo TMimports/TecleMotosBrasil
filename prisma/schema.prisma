@@ -120,6 +120,10 @@ model Produto {
   cst               String?
   ncm               String?
   unidade           UnidadeMedida      @default(UN)
+  precoTabela       Decimal?           @db.Decimal(10, 2)
+  precoCartao       Decimal?           @db.Decimal(10, 2)
+  parcela10x        Decimal?           @db.Decimal(10, 2)
+  precoDinheiro     Decimal?           @db.Decimal(10, 2)
   auditoriaEstoque  AuditoriaEstoque[]
   estoques          Estoque[]
   itensNotaFiscal   ItemNotaFiscal[]
