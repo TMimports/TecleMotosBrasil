@@ -201,6 +201,17 @@ router.post('/', async (req: AuthRequest, res) => {
     const config = await prisma.configuracao.findFirst();
     const userRole = req.user?.role;
 
+    for (const item of itens) {
+      if (item.unidadeFisicaId) {
+        const unidade = await prisma.unidadeFisica.findUnique({ where: { id: Number(item.unidadeFisicaId) } });
+        if (unidade?.status === 'VENDIDA') {
+          return res.status(400).json({
+            error: `Chassi ${unidade.chassi || '#' + unidade.id} já foi vendido anteriormente e não pode ser vendido novamente.`
+          });
+        }
+      }
+    }
+
     const tipoVendaCheck = tipo || 'VENDA';
 
     const itensParaVerificar = itens
@@ -210,7 +221,7 @@ router.post('/', async (req: AuthRequest, res) => {
     if (tipoVendaCheck !== 'ORCAMENTO' && itensParaVerificar.length > 0) {
       const verificacao = await InventoryService.verificarItensVenda(itensParaVerificar, Number(lojaId));
       if (!verificacao.valido) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Estoque insuficiente',
           detalhes: verificacao.erros
         });

@@ -260,6 +260,39 @@ export function ImportPlanilha({ tipo, onSuccess }: ImportPlanilhaProps) {
             </div>
           )}
 
+          {resultado?.duplicados > 0 && (
+            <div className="p-4 rounded-xl border bg-yellow-500/10 border-yellow-500/30">
+              <p className="text-yellow-400 font-semibold text-sm mb-1">
+                ⚠ Chassi duplicado encontrado. Verifique/corrija antes de continuar.
+              </p>
+              <p className="text-yellow-300/70 text-xs mb-3">
+                {resultado.duplicados} chassi(s) ignorado(s) por já estarem cadastrados:
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="text-yellow-400/70 border-b border-yellow-500/20">
+                      <th className="text-left py-1 pr-3">Linha</th>
+                      <th className="text-left py-1 pr-3">Modelo</th>
+                      <th className="text-left py-1 pr-3">Chassi</th>
+                      <th className="text-left py-1">Cadastrado em</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultado.detalhesDuplicados?.map((d: any, i: number) => (
+                      <tr key={i} className="border-b border-yellow-500/10">
+                        <td className="py-1 pr-3 text-yellow-300">#{d.linha}</td>
+                        <td className="py-1 pr-3 text-white">{d.modelo}</td>
+                        <td className="py-1 pr-3 font-mono text-orange-300">{d.chassi}</td>
+                        <td className="py-1 text-zinc-300">{d.lojaOndeEsta}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end">
             <button onClick={() => setModalOpen(false)} className="btn btn-secondary">
               Fechar

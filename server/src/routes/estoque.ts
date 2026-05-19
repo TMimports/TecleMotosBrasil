@@ -604,7 +604,7 @@ router.get('/empresa/:lojaId', async (req: AuthRequest, res) => {
         semGiro,
         pedidosPendentes,
         unidadesTotal: unidades.length,
-        unidadesEmEstoque: unidades.filter(u => u.status === 'ESTOQUE').length,
+        unidadesEmEstoque: unidades.filter(u => u.status !== 'VENDIDA').length,
         unidadesVendidas: unidades.filter(u => u.status === 'VENDIDA').length,
       },
       gerencial,

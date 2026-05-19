@@ -310,26 +310,44 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
 
     const unidades: any[] = [];
     const erros: string[] = [];
+    const duplicados: Array<{ linha: number; chassi: string; modelo: string; lojaOndeEsta: string }> = [];
 
     for (let i = 1; i < dados.length; i++) {
       const row = dados[i];
       const produtoNome = String(row[colProduto] ?? '').trim();
       if (!produtoNome) continue;
 
-      const chassi = iChassi  >= 0 ? String(row[iChassi] ?? '').trim() : String(row[colChassi] ?? '').trim();
-      const cor    = iCor     >= 0 ? String(row[iCor]    ?? '').trim() : '';
-      const motor  = iMotor   >= 0 ? String(row[iMotor]  ?? '').trim() : '';
-      const ano    = iAno     >= 0 ? parseInt(row[iAno]) || new Date().getFullYear() : new Date().getFullYear();
+      const chassi = (iChassi >= 0 ? String(row[iChassi] ?? '') : String(row[colChassi] ?? '')).trim().toUpperCase();
+      const cor    = iCor   >= 0 ? String(row[iCor]   ?? '').trim() : '';
+      const motor  = iMotor >= 0 ? String(row[iMotor] ?? '').trim() : '';
+      const ano    = iAno   >= 0 ? parseInt(row[iAno]) || new Date().getFullYear() : new Date().getFullYear();
 
       try {
-        const produto = await prisma.produto.findFirst({
+        let produto = await prisma.produto.findFirst({
           where: { nome: { contains: produtoNome, mode: 'insensitive' }, tipo: 'MOTO' }
         });
-        if (!produto) { erros.push(`Linha ${i + 1}: Produto "${produtoNome}" não encontrado`); continue; }
+
+        if (!produto) {
+          const codigo = await gerarCodigoProduto('MOTO');
+          produto = await prisma.produto.create({
+            data: { codigo, nome: produtoNome, tipo: 'MOTO', custo: 0, percentualLucro: 30, preco: 0, ativo: true }
+          });
+        }
 
         if (chassi) {
-          const dup = await prisma.unidadeFisica.findFirst({ where: { chassi } });
-          if (dup) { erros.push(`Linha ${i + 1}: Chassi "${chassi}" já cadastrado`); continue; }
+          const dup = await prisma.unidadeFisica.findFirst({
+            where: { chassi },
+            include: { loja: { select: { nomeFantasia: true, razaoSocial: true } } }
+          });
+          if (dup) {
+            duplicados.push({
+              linha: i + 1,
+              chassi,
+              modelo: produto.nome,
+              lojaOndeEsta: dup.loja?.nomeFantasia || dup.loja?.razaoSocial || `Loja #${dup.lojaId}`
+            });
+            continue;
+          }
         }
 
         const numeroSerie = await gerarNumeroSerieUnidade();
@@ -351,7 +369,14 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
       }
     }
 
-    res.json({ sucesso: true, importados: unidades.length, erros: erros.length, detalhesErros: erros.slice(0, 10) });
+    res.json({
+      sucesso: true,
+      importados: unidades.length,
+      erros: erros.length,
+      detalhesErros: erros.slice(0, 10),
+      duplicados: duplicados.length,
+      detalhesDuplicados: duplicados
+    });
   } catch (error: any) {
     console.error('[Importação Unidades]', error);
     res.status(500).json({ error: error.message });

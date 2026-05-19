@@ -398,7 +398,7 @@ model LogAuditoria {
   usuarioId  Int
   acao       String
   entidade   String
-  entidadeId Int
+  entidadeId Int?
   dados      String?
   createdAt  DateTime @default(now())
   usuario    User     @relation(fields: [usuarioId], references: [id])

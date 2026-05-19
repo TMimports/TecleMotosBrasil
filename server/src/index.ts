@@ -76,7 +76,22 @@ prisma.$connect().then(async () => {
 const app = express();
 const isDev = process.env.NODE_ENV !== 'production';
 
-app.use(cors());
+const ALLOWED_ORIGINS = [
+  'https://sistematmimports.com',
+  'https://www.sistematmimports.com',
+  ...(isDev ? ['http://localhost:5173', 'http://localhost:3001', 'http://localhost:5000'] : []),
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS: origem não permitida'));
+    }
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 app.use('/api', (req, res, next) => {
@@ -86,28 +101,6 @@ app.use('/api', (req, res, next) => {
   res.set('Surrogate-Control', 'no-store');
   next();
 });
-
-if (isDev) {
-  app.get('/api/setup', async (req, res) => {
-    try {
-      const bcrypt = await import('bcryptjs');
-      let admin = await prisma.user.findFirst({ where: { email: 'admin@teclemotos.com' } });
-      if (!admin) {
-        const senha = await bcrypt.default.hash('123456', 10);
-        admin = await prisma.user.create({
-          data: { nome: 'Admin Geral', email: 'admin@teclemotos.com', senha, role: 'ADMIN_GERAL', ativo: true }
-        });
-        res.json({ status: 'Admin criado!', email: 'admin@teclemotos.com' });
-      } else {
-        const senha = await bcrypt.default.hash('123456', 10);
-        await prisma.user.update({ where: { id: admin.id }, data: { senha, ativo: true, lojaId: null, grupoId: null } });
-        res.json({ status: 'Senha resetada!', email: 'admin@teclemotos.com' });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-}
 
 app.use('/api/auth', authRoutes);
 app.use('/api/grupos', gruposRoutes);

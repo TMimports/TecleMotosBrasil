@@ -77,26 +77,32 @@ router.post('/', requireAdminGeral, async (req: AuthRequest, res) => {
   }
 });
 
-// Edição: permite alterar nome, tipo, descrição e ativo.
-// Custo/preço só são atualizados internamente via confirmação de PedidoCompra.
+// Edição: permite alterar nome, tipo, descrição, ativo e preço/custo.
+// Quando preco é alterado, sincroniza com precoVenda de todos os estoques associados.
 router.put('/:id', requireAdminGeral, async (req: AuthRequest, res) => {
   try {
     const { nome, tipo, descricao, ativo, custo, percentualLucro, preco } = req.body;
 
     const data: any = {};
-    if (nome !== undefined)           data.nome = nome;
-    if (tipo !== undefined)           data.tipo = tipo;
-    if (descricao !== undefined)      data.descricao = descricao;
-    if (ativo !== undefined)          data.ativo = ativo;
-    // Custo/preço podem ser atualizados pelo sistema (PedidoCompra), nunca pelo formulário manual
-    if (custo !== undefined)          data.custo = Number(custo);
-    if (percentualLucro !== undefined) data.percentualLucro = Number(percentualLucro);
-    if (preco !== undefined)          data.preco = Number(preco);
+    if (nome !== undefined)             data.nome = nome;
+    if (tipo !== undefined)             data.tipo = tipo;
+    if (descricao !== undefined)        data.descricao = descricao;
+    if (ativo !== undefined)            data.ativo = ativo;
+    if (custo !== undefined)            data.custo = Number(custo);
+    if (percentualLucro !== undefined)  data.percentualLucro = Number(percentualLucro);
+    if (preco !== undefined)            data.preco = Number(preco);
 
     const produto = await prisma.produto.update({
       where: { id: Number(req.params.id) },
       data
     });
+
+    if (preco !== undefined) {
+      await prisma.estoque.updateMany({
+        where: { produtoId: produto.id },
+        data: { precoVenda: Number(preco) }
+      });
+    }
 
     res.json(produto);
   } catch (error) {
