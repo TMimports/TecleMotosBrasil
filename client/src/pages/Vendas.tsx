@@ -4,6 +4,7 @@ import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useLojaContext } from '../contexts/LojaContext';
 import { CustomSelect } from '../components/CustomSelect';
+import { buscarCNPJ } from '../services/cnpj';
 
 interface VendaItem {
   id: number;
@@ -145,8 +146,14 @@ export function Vendas() {
   const [cancelVendaId, setCancelVendaId] = useState<number | null>(null);
   const [cancelMotivo, setCancelMotivo] = useState('');
   const [showQuickCliente, setShowQuickCliente] = useState(false);
-  const [quickCliente, setQuickCliente] = useState({ nome: '', cpfCnpj: '', telefone: '' });
+  const [quickCliente, setQuickCliente] = useState({
+    nome: '', cpfCnpj: '', telefone: '', email: '',
+    cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: ''
+  });
   const [quickClienteLoading, setQuickClienteLoading] = useState(false);
+  const [quickClienteErro, setQuickClienteErro] = useState('');
+  const [quickBuscandoDoc, setQuickBuscandoDoc] = useState(false);
+  const [quickBuscandoCep, setQuickBuscandoCep] = useState(false);
   const [buscaVendas, setBuscaVendas] = useState('');
   const [filtroTipoVenda, setFiltroTipoVenda] = useState('');
   const [filtroStatusVenda, setFiltroStatusVenda] = useState('');
@@ -898,21 +905,78 @@ export function Vendas() {
     COMBINADO: 'Pagamento Combinado'
   };
 
+  const quickBuscarCep = async (cep: string) => {
+    const cepLimpo = cep.replace(/\D/g, '');
+    if (cepLimpo.length !== 8) return;
+    setQuickBuscandoCep(true);
+    try {
+      const data = await api.get<{ cep: string; logradouro: string; bairro: string; cidade: string; estado: string }>(
+        `/clientes/buscar-cep/${cepLimpo}`
+      );
+      setQuickCliente(p => ({
+        ...p,
+        cep: data.cep,
+        logradouro: data.logradouro || '',
+        bairro: data.bairro || '',
+        cidade: data.cidade || '',
+        estado: data.estado || ''
+      }));
+    } catch { /* CEP não encontrado */ }
+    finally { setQuickBuscandoCep(false); }
+  };
+
+  const quickHandleDocumentoBlur = async (valor: string) => {
+    const doc = valor.replace(/\D/g, '');
+    if (doc.length < 11) return;
+    setQuickBuscandoDoc(true);
+    setQuickClienteErro('');
+    try {
+      const encontrado = await api.get<{ id: number; nome: string; telefone?: string; email?: string }>(`/clientes/por-documento/${doc}`).catch(() => null);
+      if (encontrado) {
+        setQuickClienteErro(`${doc.length === 11 ? 'CPF' : 'CNPJ'} já cadastrado para: ${encontrado.nome}. Não é possível duplicar.`);
+        return;
+      }
+      if (doc.length === 14) {
+        const cnpjData = await buscarCNPJ(doc);
+        if (cnpjData) {
+          setQuickCliente(p => ({
+            ...p,
+            nome: p.nome || cnpjData.razaoSocial,
+            telefone: p.telefone || cnpjData.telefone,
+            email: p.email || cnpjData.email,
+            cep: p.cep || cnpjData.cep.replace(/\D/g, ''),
+            bairro: p.bairro || cnpjData.bairro,
+            cidade: p.cidade || cnpjData.cidade,
+            estado: p.estado || cnpjData.uf
+          }));
+          if (cnpjData.cep) await quickBuscarCep(cnpjData.cep);
+        }
+      }
+    } finally {
+      setQuickBuscandoDoc(false);
+    }
+  };
+
   const criarClienteRapido = async () => {
-    if (!quickCliente.nome.trim()) return;
+    setQuickClienteErro('');
+    if (!quickCliente.nome.trim()) { setQuickClienteErro('Nome é obrigatório.'); return; }
+    if (!quickCliente.cpfCnpj.trim()) { setQuickClienteErro('CPF/CNPJ é obrigatório.'); return; }
+    const doc = quickCliente.cpfCnpj.replace(/\D/g, '');
+    if (doc.length !== 11 && doc.length !== 14) { setQuickClienteErro('CPF deve ter 11 dígitos ou CNPJ 14 dígitos.'); return; }
+
     setQuickClienteLoading(true);
     try {
       const novo = await api.post<{ id: number; nome: string }>('/clientes', {
+        ...quickCliente,
         nome: quickCliente.nome.trim(),
-        cpfCnpj: quickCliente.cpfCnpj || undefined,
-        telefone: quickCliente.telefone || undefined,
       });
       setClientes(prev => [...prev, novo]);
       setForm(f => ({ ...f, clienteId: String(novo.id) }));
       setShowQuickCliente(false);
-      setQuickCliente({ nome: '', cpfCnpj: '', telefone: '' });
+      setQuickCliente({ nome: '', cpfCnpj: '', telefone: '', email: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' });
+      setQuickClienteErro('');
     } catch (e: any) {
-      alert(e.message || 'Erro ao criar cliente');
+      setQuickClienteErro(e.message || 'Erro ao criar cliente');
     } finally {
       setQuickClienteLoading(false);
     }
@@ -1175,6 +1239,21 @@ export function Vendas() {
                         <button type="button" onClick={() => removerMoto(index)} className="text-red-500 hover:text-red-400 font-bold mb-1">✕</button>
                       </div>
                     </div>
+                    {item.produtoId && (
+                      <div className="mt-2 flex items-center gap-3 px-1 py-1.5 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
+                        <span className="text-xs text-zinc-500 shrink-0">Base da venda:</span>
+                        <span className="text-xl font-bold text-orange-400">
+                          R$ {Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                        {parseFloat(item.desconto) > 0 && !isCartao && (
+                          <span className="text-xs text-zinc-500 ml-auto">
+                            Final: <span className="text-green-400 font-semibold">
+                              R$ {(item.preco * (1 - parseFloat(item.desconto) / 100)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {item.produtoId && !isCartao && (
                       <div className="mt-1 ml-1">
                         {parseFloat(item.desconto) > maxDescontoRole ? (
@@ -1951,29 +2030,115 @@ export function Vendas() {
       </Modal>
 
       {showQuickCliente && (
-        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) setShowQuickCliente(false); }}>
-          <div className="bg-[#18181b] border border-[#27272a] rounded-xl w-full max-w-md">
-            <div className="p-5 border-b border-[#27272a] flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) { setShowQuickCliente(false); setQuickClienteErro(''); } }}>
+          <div className="bg-[#18181b] border border-[#27272a] rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-[#27272a] flex items-center justify-between sticky top-0 bg-[#18181b] z-10">
               <h3 className="font-bold text-white">Novo Cliente</h3>
-              <button onClick={() => setShowQuickCliente(false)} className="text-zinc-400 hover:text-white text-xl leading-none">×</button>
+              <button onClick={() => { setShowQuickCliente(false); setQuickClienteErro(''); }} className="text-zinc-400 hover:text-white text-xl leading-none">×</button>
             </div>
             <div className="p-5 space-y-3">
+              {quickClienteErro && (
+                <div className="p-3 bg-red-900/30 border border-red-500/50 rounded-lg text-sm text-red-400">{quickClienteErro}</div>
+              )}
+
+              {/* CPF/CNPJ primeiro — dispara auto-fill */}
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">CPF / CNPJ *</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                    value={quickCliente.cpfCnpj}
+                    onChange={e => { setQuickCliente(p => ({ ...p, cpfCnpj: e.target.value })); setQuickClienteErro(''); }}
+                    onBlur={e => quickHandleDocumentoBlur(e.target.value)}
+                    placeholder="000.000.000-00 ou 00.000.000/0000-00"
+                  />
+                  {quickBuscandoDoc && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-orange-400 animate-pulse">buscando...</span>}
+                </div>
+              </div>
+
               <div>
                 <label className="text-xs text-zinc-400 block mb-1">Nome *</label>
-                <input autoFocus type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50" value={quickCliente.nome} onChange={e => setQuickCliente(p => ({ ...p, nome: e.target.value }))} placeholder="Nome completo" onKeyDown={e => e.key === 'Enter' && criarClienteRapido()} />
+                <input
+                  autoFocus
+                  type="text"
+                  className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                  value={quickCliente.nome}
+                  onChange={e => setQuickCliente(p => ({ ...p, nome: e.target.value }))}
+                  placeholder="Nome completo"
+                />
               </div>
-              <div>
-                <label className="text-xs text-zinc-400 block mb-1">CPF / CNPJ</label>
-                <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50" value={quickCliente.cpfCnpj} onChange={e => setQuickCliente(p => ({ ...p, cpfCnpj: e.target.value }))} placeholder="Opcional" />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Telefone</label>
+                  <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                    value={quickCliente.telefone} onChange={e => setQuickCliente(p => ({ ...p, telefone: e.target.value }))} placeholder="(00) 00000-0000" />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Email</label>
+                  <input type="email" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                    value={quickCliente.email} onChange={e => setQuickCliente(p => ({ ...p, email: e.target.value }))} placeholder="email@exemplo.com" />
+                </div>
               </div>
-              <div>
-                <label className="text-xs text-zinc-400 block mb-1">Telefone</label>
-                <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50" value={quickCliente.telefone} onChange={e => setQuickCliente(p => ({ ...p, telefone: e.target.value }))} placeholder="Opcional" />
+
+              {/* Endereço */}
+              <div className="border-t border-zinc-700 pt-3">
+                <p className="text-xs text-zinc-500 mb-2">Endereço (opcional)</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-1">
+                    <label className="text-xs text-zinc-400 block mb-1">CEP</label>
+                    <div className="relative">
+                      <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                        value={quickCliente.cep} onChange={e => setQuickCliente(p => ({ ...p, cep: e.target.value }))}
+                        onBlur={e => quickBuscarCep(e.target.value)} placeholder="00000-000" maxLength={9} />
+                      {quickBuscandoCep && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-orange-400 animate-pulse">...</span>}
+                    </div>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-zinc-400 block mb-1">Logradouro</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.logradouro} onChange={e => setQuickCliente(p => ({ ...p, logradouro: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Número</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.numero} onChange={e => setQuickCliente(p => ({ ...p, numero: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Compl.</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.complemento} onChange={e => setQuickCliente(p => ({ ...p, complemento: e.target.value }))} />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs text-zinc-400 block mb-1">Bairro</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.bairro} onChange={e => setQuickCliente(p => ({ ...p, bairro: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  <div className="col-span-2">
+                    <label className="text-xs text-zinc-400 block mb-1">Cidade</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.cidade} onChange={e => setQuickCliente(p => ({ ...p, cidade: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Estado</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={quickCliente.estado} onChange={e => setQuickCliente(p => ({ ...p, estado: e.target.value }))} maxLength={2} placeholder="UF" />
+                  </div>
+                </div>
               </div>
             </div>
             <div className="p-5 pt-0 flex gap-3 justify-end">
-              <button onClick={() => setShowQuickCliente(false)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancelar</button>
-              <button onClick={criarClienteRapido} disabled={!quickCliente.nome.trim() || quickClienteLoading} className="px-4 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg disabled:opacity-50 font-medium transition-colors">
+              <button onClick={() => { setShowQuickCliente(false); setQuickClienteErro(''); }} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancelar</button>
+              <button
+                onClick={criarClienteRapido}
+                disabled={quickClienteLoading || quickBuscandoDoc}
+                className="px-4 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg disabled:opacity-50 font-medium transition-colors"
+              >
                 {quickClienteLoading ? 'Salvando...' : 'Salvar Cliente'}
               </button>
             </div>

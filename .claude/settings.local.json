@@ -18,7 +18,13 @@
       "PowerShell(git add *)",
       "Bash(git add *)",
       "Bash(git commit -m 'fix: chassi e motor preenchidos automaticamente ao selecionar unidade na venda *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npx prisma *)",
+      "Bash(dir C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\scripts\\\\ *)",
+      "PowerShell(cmd /c \"dir /a \"\"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\scripts\"\"\")",
+      "PowerShell(cmd /c \"dir /s /b \"\"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\\"\" | findstr banco\")",
+      "PowerShell(cmd /c \"dir /s /b \"\"C:\\\\Users\\\\mario\\\\\"\" | findstr banco-real\")",
+      "PowerShell(cmd /c \"dir \"\"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\scripts\"\"\")"
     ]
   }
 }

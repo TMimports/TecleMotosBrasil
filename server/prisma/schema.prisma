@@ -145,25 +145,28 @@ model Servico {
 }
 
 model UnidadeFisica {
-  id             Int             @id @default(autoincrement())
-  produtoId      Int
-  cor            String?
-  chassi         String?
-  codigoMotor    String?
-  ano            Int?
-  numeroSerie    String?
-  status         StatusUnidade   @default(ESTOQUE)
-  lojaId         Int
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  createdBy      Int?
-  garantias      Garantia[]
-  itensVenda     ItemVenda[]
-  ordensServico  OrdemServico[]
-  revisoes       Revisao[]
-  transferencias Transferencia[]
-  loja           Loja            @relation(fields: [lojaId], references: [id])
-  produto        Produto         @relation(fields: [produtoId], references: [id])
+  id                Int             @id @default(autoincrement())
+  produtoId         Int
+  cor               String?
+  chassi            String?
+  codigoMotor       String?
+  ano               Int?
+  numeroSerie       String?
+  status            StatusUnidade   @default(ESTOQUE)
+  lojaId            Int
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  createdBy         Int?
+  fornecedorId      Int?
+  notaFiscalEntrada String?
+  garantias         Garantia[]
+  itensVenda        ItemVenda[]
+  ordensServico     OrdemServico[]
+  revisoes          Revisao[]
+  transferencias    Transferencia[]
+  loja              Loja            @relation(fields: [lojaId], references: [id])
+  produto           Produto         @relation(fields: [produtoId], references: [id])
+  fornecedor        Fornecedor?     @relation(fields: [fornecedorId], references: [id])
 }
 
 model Estoque {
@@ -669,6 +672,7 @@ model Fornecedor {
   loja             Loja              @relation(fields: [lojaId], references: [id])
   interacoes       InteracaoCRM[]
   notasFiscais     NotaFiscal[]
+  unidades         UnidadeFisica[]
 }
 
 model InteracaoCRM {

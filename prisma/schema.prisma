@@ -56,7 +56,6 @@ model Loja {
   unidades              UnidadeFisica[]
   usuarios              User[]
   vendas                Venda[]
-  leads                 Lead[]
 }
 
 model User {
@@ -93,9 +92,6 @@ model User {
   grupo                     Grupo?             @relation(fields: [grupoId], references: [id])
   loja                      Loja?              @relation(fields: [lojaId], references: [id])
   vendas                    Venda[]            @relation("VendaVendedor")
-  leadsVendedor             Lead[]             @relation("LeadVendedor")
-  leadsRepassados           Lead[]             @relation("LeadRepassadoPor")
-  interacoesLead            LeadInteracao[]
 }
 
 model Produto {
@@ -1024,97 +1020,6 @@ enum TipoDisparo {
   CRON
 }
 
-// ── CRM Leads Beta ────────────────────────────────────────────────────────────
-
-enum OrigemLead {
-  META
-  GOOGLE
-  SITE
-  WHATSAPP
-  INDICACAO
-  OUTRO
-  TESTE
-}
-
-enum InteresseLead {
-  MOTO
-  PECA
-  SERVICO
-  CURSO
-  OUTRO
-}
-
-enum StatusLead {
-  NOVO
-  EM_ATENDIMENTO
-  PROPOSTA_ENVIADA
-  GANHO
-  PERDIDO
-  SEM_RESPOSTA
-}
-
-enum PrioridadeLead {
-  BAIXA
-  MEDIA
-  ALTA
-}
-
-enum TipoInteracaoLead {
-  LIGACAO
-  WHATSAPP
-  EMAIL
-  OBSERVACAO
-  FOLLOW_UP
-  REUNIAO
-  VISITA
-}
-
-model Lead {
-  id                      Int             @id @default(autoincrement())
-  nome                    String
-  telefone                String?
-  email                   String?
-  origem                  OrigemLead      @default(OUTRO)
-  campanha                String?
-  interesse               InteresseLead   @default(MOTO)
-  interesseCorrigido      String?
-  lojaId                  Int?
-  vendedorId              Int?
-  repassadoPorId          Int?
-  dataRepasseVendedor     DateTime?
-  status                  StatusLead      @default(NOVO)
-  prioridade              PrioridadeLead  @default(MEDIA)
-  resumo                  String?
-  proximaAcao             String?
-  mensagemWhatsApp        String?
-  dataProximoFollowUp     DateTime?
-  observacoes             String?
-  whatsappComercialOrigem String?
-  canalOrigem             String?
-  mensagemRecebida        String?
-  linkConversa            String?
-  regiaoCliente           String?
-  bairroCliente           String?
-  cidadeCliente           String?
-  ufCliente               String?
-  lojaSugerida            String?
-  motivoLojaSugerida      String?
-  origemRepasse           String?
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
-  loja                    Loja?           @relation(fields: [lojaId], references: [id])
-  vendedor                User?           @relation("LeadVendedor", fields: [vendedorId], references: [id])
-  repassadoPor            User?           @relation("LeadRepassadoPor", fields: [repassadoPorId], references: [id])
-  interacoes              LeadInteracao[]
-}
-
-model LeadInteracao {
-  id        Int               @id @default(autoincrement())
-  leadId    Int
-  usuarioId Int
-  tipo      TipoInteracaoLead @default(OBSERVACAO)
-  descricao String
-  createdAt DateTime          @default(now())
-  lead      Lead              @relation(fields: [leadId], references: [id])
-  usuario   User              @relation(fields: [usuarioId], references: [id])
-}
+// Lead e LeadInteracao existem no banco mas não são usados nesta versão do ERP.
+// As tabelas são preservadas no banco — apenas removidas do Prisma schema para
+// evitar conflitos com a estrutura divergente do banco de produção.

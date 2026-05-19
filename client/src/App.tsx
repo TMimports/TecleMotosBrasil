@@ -34,7 +34,6 @@ import { Relatorios } from './pages/Relatorios';
 import { WhatsAppCRM } from './pages/WhatsAppCRM';
 import { Transferencias } from './pages/Transferencias';
 import { DashboardComercial } from './pages/DashboardComercial';
-import { CrmLeadsBeta } from './pages/CrmLeadsBeta';
 import { LogAtividades } from './pages/LogAtividades';
 import { InstallBanner } from './components/InstallBanner';
 
@@ -138,8 +137,6 @@ function AppContent() {
         return <WhatsAppCRM />;
       case 'dashboard-comercial':
         return <DashboardComercial />;
-      case 'crm-leads-beta':
-        return <CrmLeadsBeta />;
       case 'log-atividades':
         return <LogAtividades />;
       default:

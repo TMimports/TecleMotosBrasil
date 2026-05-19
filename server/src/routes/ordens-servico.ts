@@ -195,10 +195,13 @@ router.post('/', async (req: AuthRequest, res) => {
       .filter((item: any) => item.produtoId)
       .map((item: any) => ({ produtoId: item.produtoId, quantidade: item.quantidade }));
 
-    if (tipo !== 'ORCAMENTO' && itensParaVerificar.length > 0) {
+    // Acionamento de Garantia não verifica nem baixa estoque
+    const isGarantia = tipo === 'ACIONAMENTO_GARANTIA';
+
+    if (tipo !== 'ORCAMENTO' && !isGarantia && itensParaVerificar.length > 0) {
       const verificacao = await InventoryService.verificarItensVenda(itensParaVerificar, Number(lojaId));
       if (!verificacao.valido) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Estoque insuficiente',
           detalhes: verificacao.erros
         });
@@ -253,6 +256,7 @@ router.post('/', async (req: AuthRequest, res) => {
 
     const tipoOS = tipo || 'OS';
     const status = tipoOS === 'ORCAMENTO' ? 'ORCAMENTO' : 'EM_EXECUCAO';
+    const skipEstoque = tipoOS === 'ORCAMENTO' || tipoOS === 'ACIONAMENTO_GARANTIA';
 
     const osCreated = await prisma.ordemServico.create({
       data: {
@@ -282,7 +286,7 @@ router.post('/', async (req: AuthRequest, res) => {
     await prisma.ordemServico.update({ where: { id: osCreated.id }, data: { numero: numeroOS } });
     const os = { ...osCreated, numero: numeroOS };
 
-    if (tipoOS !== 'ORCAMENTO' && itensProcessados.some(i => i.produtoId)) {
+    if (!skipEstoque && itensProcessados.some(i => i.produtoId)) {
       const resultadoBaixa = await InventoryService.processarBaixaOS(
         os.id,
         itensProcessados.filter(i => i.produtoId).map(i => ({
@@ -302,6 +306,39 @@ router.post('/', async (req: AuthRequest, res) => {
     res.status(201).json(os);
   } catch (error) {
     console.error('Erro ao criar OS:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// ── PUT /os/:id/laudo — salva parecer técnico/administrativo em observacoes ──
+router.put('/:id/laudo', async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { parecerTecnico, parecerAdmin, responsavelTecnico, responsavelAdmin, statusLaudo } = req.body;
+
+    const osAtual = await prisma.ordemServico.findUnique({ where: { id } });
+    if (!osAtual) return res.status(404).json({ error: 'OS não encontrada' });
+
+    let obsParsed: any = {};
+    try { obsParsed = JSON.parse(osAtual.observacoes || '{}'); } catch { obsParsed = { texto: osAtual.observacoes || '' }; }
+
+    obsParsed.laudo = {
+      parecerTecnico: parecerTecnico || '',
+      parecerAdmin: parecerAdmin || '',
+      responsavelTecnico: responsavelTecnico || '',
+      responsavelAdmin: responsavelAdmin || '',
+      status: statusLaudo || 'EM_ANALISE',
+      data: new Date().toISOString()
+    };
+
+    const os = await prisma.ordemServico.update({
+      where: { id },
+      data: { observacoes: JSON.stringify(obsParsed) }
+    });
+
+    res.json(os);
+  } catch (error) {
+    console.error('Erro ao salvar laudo:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

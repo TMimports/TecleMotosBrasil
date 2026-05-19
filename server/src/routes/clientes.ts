@@ -7,10 +7,15 @@ const router = Router();
 
 router.use(verifyToken);
 
+function normalizarDocumento(doc: string): string {
+  return doc.replace(/\D/g, '');
+}
+
+// ── GET /clientes ─────────────────────────────────────────────────────────────
 router.get('/', async (req: AuthRequest, res) => {
   try {
     const where: any = {};
-    
+
     if (req.user?.role === 'ADMIN_GERAL' || req.user?.role === 'ADMIN_REDE') {
     } else if (req.user?.lojaId) {
       where.OR = [
@@ -41,6 +46,7 @@ router.get('/', async (req: AuthRequest, res) => {
   }
 });
 
+// ── GET /clientes/buscar-cep/:cep ─────────────────────────────────────────────
 router.get('/buscar-cep/:cep', async (req, res) => {
   try {
     const cep = req.params.cep.replace(/\D/g, '');
@@ -68,6 +74,35 @@ router.get('/buscar-cep/:cep', async (req, res) => {
   }
 });
 
+// ── GET /clientes/por-documento/:documento ────────────────────────────────────
+// Busca cliente por CPF ou CNPJ (com ou sem máscara)
+router.get('/por-documento/:documento', async (req: AuthRequest, res) => {
+  try {
+    const docLimpo = normalizarDocumento(req.params.documento);
+    if (docLimpo.length < 11) {
+      return res.status(400).json({ error: 'Documento inválido' });
+    }
+
+    const cliente = await prisma.cliente.findFirst({
+      where: {
+        cpfCnpj: {
+          in: [docLimpo, req.params.documento]
+        }
+      }
+    });
+
+    if (!cliente) {
+      return res.status(404).json({ error: 'Cliente não encontrado' });
+    }
+
+    res.json(cliente);
+  } catch (error) {
+    console.error('Erro ao buscar por documento:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// ── GET /clientes/:id ─────────────────────────────────────────────────────────
 router.get('/:id', async (req: AuthRequest, res) => {
   try {
     const cliente = await prisma.cliente.findUnique({
@@ -99,12 +134,34 @@ router.get('/:id', async (req: AuthRequest, res) => {
   }
 });
 
+// ── POST /clientes ────────────────────────────────────────────────────────────
 router.post('/', async (req: AuthRequest, res) => {
   try {
     const { nome, cpfCnpj, telefone, email, cep, logradouro, numero, complemento, bairro, cidade, estado, lojaId: lojaIdBody } = req.body;
 
-    if (!nome) {
+    if (!nome?.trim()) {
       return res.status(400).json({ error: 'Nome é obrigatório' });
+    }
+
+    if (!cpfCnpj?.trim()) {
+      return res.status(400).json({ error: 'CPF/CNPJ é obrigatório' });
+    }
+
+    const docLimpo = normalizarDocumento(cpfCnpj);
+    if (docLimpo.length !== 11 && docLimpo.length !== 14) {
+      return res.status(400).json({ error: 'CPF/CNPJ inválido. Informe CPF (11 dígitos) ou CNPJ (14 dígitos).' });
+    }
+
+    // Verificar duplicidade por CPF/CNPJ
+    const existente = await prisma.cliente.findFirst({
+      where: { cpfCnpj: { in: [docLimpo, cpfCnpj.trim()] } }
+    });
+    if (existente) {
+      return res.status(409).json({
+        error: `Cliente já cadastrado com este ${docLimpo.length === 11 ? 'CPF' : 'CNPJ'}.`,
+        clienteId: existente.id,
+        clienteNome: existente.nome
+      });
     }
 
     let lojaId = req.user!.lojaId;
@@ -129,17 +186,17 @@ router.post('/', async (req: AuthRequest, res) => {
 
     const cliente = await prisma.cliente.create({
       data: {
-        nome,
-        cpfCnpj,
-        telefone,
-        email,
-        cep,
-        logradouro,
-        numero,
-        complemento,
-        bairro,
-        cidade,
-        estado,
+        nome: nome.trim(),
+        cpfCnpj: docLimpo,
+        telefone: telefone?.trim() || null,
+        email: email?.trim() || null,
+        cep: cep?.trim() || null,
+        logradouro: logradouro?.trim() || null,
+        numero: numero?.trim() || null,
+        complemento: complemento?.trim() || null,
+        bairro: bairro?.trim() || null,
+        cidade: cidade?.trim() || null,
+        estado: estado?.trim() || null,
         lojaId,
         createdBy: req.user!.id
       }
@@ -152,13 +209,55 @@ router.post('/', async (req: AuthRequest, res) => {
   }
 });
 
+// ── PUT /clientes/:id ─────────────────────────────────────────────────────────
 router.put('/:id', async (req: AuthRequest, res) => {
   try {
+    const id = Number(req.params.id);
     const { nome, cpfCnpj, telefone, email, cep, logradouro, numero, complemento, bairro, cidade, estado } = req.body;
 
+    if (!nome?.trim()) {
+      return res.status(400).json({ error: 'Nome é obrigatório' });
+    }
+
+    if (!cpfCnpj?.trim()) {
+      return res.status(400).json({ error: 'CPF/CNPJ é obrigatório' });
+    }
+
+    const docLimpo = normalizarDocumento(cpfCnpj);
+    if (docLimpo.length !== 11 && docLimpo.length !== 14) {
+      return res.status(400).json({ error: 'CPF/CNPJ inválido.' });
+    }
+
+    // Verificar duplicidade excluindo o próprio cliente
+    const existente = await prisma.cliente.findFirst({
+      where: {
+        cpfCnpj: { in: [docLimpo, cpfCnpj.trim()] },
+        id: { not: id }
+      }
+    });
+    if (existente) {
+      return res.status(409).json({
+        error: `Outro cliente já cadastrado com este ${docLimpo.length === 11 ? 'CPF' : 'CNPJ'}.`,
+        clienteId: existente.id,
+        clienteNome: existente.nome
+      });
+    }
+
     const cliente = await prisma.cliente.update({
-      where: { id: Number(req.params.id) },
-      data: { nome, cpfCnpj, telefone, email, cep, logradouro, numero, complemento, bairro, cidade, estado }
+      where: { id },
+      data: {
+        nome: nome.trim(),
+        cpfCnpj: docLimpo,
+        telefone: telefone?.trim() || null,
+        email: email?.trim() || null,
+        cep: cep?.trim() || null,
+        logradouro: logradouro?.trim() || null,
+        numero: numero?.trim() || null,
+        complemento: complemento?.trim() || null,
+        bairro: bairro?.trim() || null,
+        cidade: cidade?.trim() || null,
+        estado: estado?.trim() || null
+      }
     });
 
     res.json(cliente);
@@ -168,6 +267,7 @@ router.put('/:id', async (req: AuthRequest, res) => {
   }
 });
 
+// ── DELETE /clientes/:id ──────────────────────────────────────────────────────
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const clienteId = Number(req.params.id);
@@ -188,9 +288,7 @@ router.delete('/:id', async (req: AuthRequest, res) => {
 
     const clienteParaExcluir = await prisma.cliente.findUnique({ where: { id: clienteId }, select: { nome: true } });
 
-    await prisma.cliente.delete({
-      where: { id: clienteId }
-    });
+    await prisma.cliente.delete({ where: { id: clienteId } });
 
     registrarLog({
       usuarioId:  req.user?.id,
