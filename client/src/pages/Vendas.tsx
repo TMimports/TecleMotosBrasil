@@ -1,15 +1,9 @@
-import { useEffect, useState, useRef } from 'react';
-import * as XLSX from 'xlsx';
+﻿import { useEffect, useState, useRef } from 'react';
 import { api } from '../services/api';
 import { Modal } from '../components/Modal';
 import { useAuth } from '../contexts/AuthContext';
 import { useLojaContext } from '../contexts/LojaContext';
 import { CustomSelect } from '../components/CustomSelect';
-
-interface UnidadeFisicaInfo {
-  chassi?: string | null;
-  codigoMotor?: string | null;
-}
 
 interface VendaItem {
   id: number;
@@ -19,7 +13,6 @@ interface VendaItem {
   unidadeFisicaId?: number;
   produto?: { nome: string };
   servico?: { nome: string };
-  unidadeFisica?: UnidadeFisicaInfo;
 }
 
 interface VendaFull {
@@ -42,17 +35,13 @@ interface VendaFull {
 interface Venda {
   id: number;
   tipo: string;
-  cliente: { nome: string; cpfCnpj?: string; telefone?: string };
+  cliente: { nome: string };
   vendedor: { nome: string };
-  loja?: { id: number; nomeFantasia: string };
   valorTotal: number;
-  valorBruto?: number;
   formaPagamento: string;
-  parcelas?: number | null;
   confirmadaFinanceiro: boolean;
   deletedAt: string | null;
   createdAt: string;
-  itens?: VendaItem[];
 }
 
 interface Cliente {
@@ -132,8 +121,6 @@ const TAXAS_MAQUINA: Record<number, number> = {
 };
 
 const TODAS_PARCELAS = Array.from({ length: 18 }, (_, i) => i + 1);
-
-const roundMoney = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
 
 export function Vendas() {
   const { user } = useAuth();
@@ -378,16 +365,20 @@ export function Vendas() {
 
   const calcularTotal = () => {
     const totalPecas = itensSelecionados.reduce((acc, item) => {
-      const sub = roundMoney(item.preco * item.quantidade);
-      const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
-      return acc + roundMoney(sub - descVal);
+      const sub = item.preco * item.quantidade;
+      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
+      return acc + sub * (1 - desc / 100);
     }, 0);
     const totalMotos = motosSelecionadas.reduce((acc, item) => {
-      const sub = roundMoney(item.preco * item.quantidade);
-      const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
-      return acc + roundMoney(sub - descVal);
+      const sub = item.preco * item.quantidade;
+      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
+      return acc + sub * (1 - desc / 100);
     }, 0);
-    return roundMoney(totalPecas + totalMotos);
+    const total = totalPecas + totalMotos;
+    if (total % 1 !== 0) {
+      return Math.ceil(total);
+    }
+    return total;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -440,7 +431,7 @@ export function Vendas() {
       const nParcelas = parseInt(form.parcelas) || 1;
       const taxa = TAXAS_MAQUINA[nParcelas] ?? 0;
       const comTaxa = totalFinal * (1 + taxa);
-      valorParaSalvar = roundMoney(comTaxa);
+      valorParaSalvar = comTaxa % 1 !== 0 ? Math.ceil(comTaxa) : comTaxa;
     } else {
       // PIX, Dinheiro, Débito: sem encargo
       valorParaSalvar = totalFinal;
@@ -552,7 +543,7 @@ export function Vendas() {
     }
   };
 
-  const handlePrint = async () => {
+  const handlePrint = () => {
     if (!printRef.current) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -562,21 +553,9 @@ export function Vendas() {
     const isTMImports = vendaDetalhada?.loja?.id === 4
       || nomeFantasia.includes('tm import')
       || nomeFantasia.includes('importa');
-    const logoFile  = isTMImports ? 'logo-tm.png' : 'logo.png';
+    const logoUrl   = `${window.location.origin}/${isTMImports ? 'logo-tm.png' : 'logo.png'}`;
     const brandName = isTMImports ? 'TM Imports' : 'Tecle Motos';
     const brandSub  = isTMImports ? 'Tecnologia em Mobilidade Elétrica' : 'Motopeças e Scooters Elétricas';
-
-    // Converte logo para base64 (garante que aparece na impressão)
-    let logoUrl = `${window.location.origin}/${logoFile}`;
-    try {
-      const resp = await fetch(`/${logoFile}`);
-      const blob = await resp.blob();
-      logoUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
-    } catch (_) { /* usa URL original como fallback */ }
 
     // ── Tipo de documento ───────────────────────────────────────────────────
     const isOrcamento = vendaDetalhada?.tipo === 'ORCAMENTO';
@@ -749,7 +728,7 @@ export function Vendas() {
             <div class="brand-header-right">
               <div class="doc-type">${isOrcamento ? 'Orçamento' : 'Comprovante de Venda'}</div>
               <div class="doc-num">#${vendaDetalhada?.id?.toString().padStart(5, '0')}</div>
-              <div class="doc-meta">${vendaDetalhada?.createdAt ? new Date(vendaDetalhada.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+              <div class="doc-meta">${vendaDetalhada?.createdAt ? new Date(vendaDetalhada.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }) : ''}</div>
               <div class="loja-name">${vendaDetalhada?.loja?.nomeFantasia || ''}</div>
             </div>
           </div>
@@ -787,22 +766,12 @@ export function Vendas() {
               </thead>
               <tbody>
                 ${(vendaDetalhada?.itens || []).map((item: any) => {
-                  const desc    = Number(item.desconto || 0);
-                  const bruto   = Number(item.precoUnitario) * item.quantidade;
-                  const final   = bruto * (1 - desc / 100);
-                  const nome    = item.produto?.nome || item.servico?.nome || '-';
-                  const chassi  = item.unidadeFisica?.chassi;
-                  const motor   = item.unidadeFisica?.codigoMotor;
-                  const temUnit = chassi || motor;
+                  const desc  = Number(item.desconto || 0);
+                  const bruto = Number(item.precoUnitario) * item.quantidade;
+                  const final = bruto * (1 - desc / 100);
+                  const nome  = item.produto?.nome || item.servico?.nome || '-';
                   return `<tr>
-                    <td>
-                      <div style="font-weight:500">${nome}</div>
-                      ${temUnit ? `<div style="font-size:10px;color:#888;margin-top:2px">
-                        ${chassi ? `Chassi: <strong style="color:#555">${chassi}</strong>` : ''}
-                        ${chassi && motor ? ' &nbsp;|&nbsp; ' : ''}
-                        ${motor  ? `Motor: <strong style="color:#555">${motor}</strong>` : ''}
-                      </div>` : ''}
-                    </td>
+                    <td>${nome}</td>
                     <td>${item.quantidade}</td>
                     <td>R$ ${Number(item.precoUnitario).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
                     <td style="color:${desc>0?'#ca8a04':'#bbb'}">${desc>0?desc+'%':'-'}</td>
@@ -882,137 +851,6 @@ export function Vendas() {
     COMBINADO: 'Pagamento Combinado'
   };
 
-  const handleExportExcel = () => {
-    const wb = XLSX.utils.book_new();
-
-    const fmtValor = (n: number) => Number(n.toFixed(2));
-    const labelPagXls = (t: string) => ({
-      PIX: 'Pix', DINHEIRO: 'Dinheiro', CARTAO: 'Cartão', CARTAO_DEBITO: 'Cartão Débito',
-      CARTAO_CREDITO: 'Cartão Crédito', FINANCIAMENTO: 'Financiamento',
-      BOLETO: 'Boleto', COMBINADO: 'Pagamento Combinado'
-    }[t] || t);
-
-    // ── Aba 1: Vendas Detalhadas (uma linha por item) ──────────────────────
-    const headers = [
-      'ID', 'Data/Hora', 'Tipo', 'Cliente', 'CPF/CNPJ', 'Telefone',
-      'Loja', 'Vendedor',
-      'Produto / Serviço', 'Especificação', 'Cor', 'Chassi', 'Cód Motor',
-      'Forma de Pagamento',
-      '1ª Forma', '1º Valor (R$)', '1ª Parcelas',
-      '2ª Forma', '2º Valor (R$)', '2ª Parcelas',
-      'Valor Base (R$)', 'Valor Final (R$)', 'Status Financeiro'
-    ];
-
-    const rows: (string | number)[][] = [];
-
-    vendas.filter(v => !v.deletedAt).forEach(v => {
-      // Extrair pagamentos compostos (COMBINADO)
-      let pag1Forma = '-', pag2Forma = '-';
-      let pag1Valor: number | string = '-', pag2Valor: number | string = '-';
-      let pag1Parcelas: number | string = '-', pag2Parcelas: number | string = '-';
-
-      if (v.formaPagamento === 'COMBINADO' && (v as any).pagamentosJson) {
-        try {
-          const compostos: {tipo: string; valor: number; parcelas?: number}[] = JSON.parse((v as any).pagamentosJson);
-          if (compostos[0]) {
-            pag1Forma = labelPagXls(compostos[0].tipo);
-            pag1Valor = fmtValor(Number(compostos[0].valor));
-            pag1Parcelas = Number(compostos[0].parcelas) || 1;
-          }
-          if (compostos[1]) {
-            pag2Forma = labelPagXls(compostos[1].tipo);
-            pag2Valor = fmtValor(Number(compostos[1].valor));
-            pag2Parcelas = Number(compostos[1].parcelas) || 1;
-          }
-        } catch (_) {}
-      } else {
-        pag1Forma = labelPagXls(v.formaPagamento);
-        pag1Valor = fmtValor(Number(v.valorTotal));
-        pag1Parcelas = v.parcelas || 1;
-      }
-
-      const dataHoraVenda = new Date(v.createdAt).toLocaleString('pt-BR', {
-        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-      });
-      const tipo = v.tipo === 'ORCAMENTO' ? 'Orçamento' : 'Venda';
-      const cliente = v.cliente?.nome || '-';
-      const cpf = v.cliente?.cpfCnpj || '-';
-      const tel = v.cliente?.telefone || '-';
-      const loja = v.loja?.nomeFantasia || '-';
-      const vendedor = v.vendedor?.nome || '-';
-      const formaPag = labelPagXls(v.formaPagamento);
-      const valorBase = fmtValor(Number(v.valorBruto || v.valorTotal));
-      const valorFinal = fmtValor(Number(v.valorTotal));
-      const statusFin = v.confirmadaFinanceiro ? 'Confirmada' : 'Pendente';
-
-      const itensDaVenda = v.itens || [];
-      if (itensDaVenda.length === 0) {
-        rows.push([
-          v.id, dataHoraVenda, tipo, cliente, cpf, tel, loja, vendedor,
-          '-', '-', '-', '-', '-',
-          formaPag,
-          pag1Forma, pag1Valor, pag1Parcelas,
-          pag2Forma, pag2Valor, pag2Parcelas,
-          valorBase, valorFinal, statusFin
-        ]);
-      } else {
-        itensDaVenda.forEach((item: any) => {
-          const nomeProduto = item.produto?.nome || item.servico?.nome || '-';
-          const especificacao = item.produto?.descricao || '-';
-          const cor = item.unidadeFisica?.cor || '-';
-          const chassi = item.unidadeFisica?.chassi || '-';
-          const motor = item.unidadeFisica?.codigoMotor || '-';
-          rows.push([
-            v.id, dataHoraVenda, tipo, cliente, cpf, tel, loja, vendedor,
-            nomeProduto, especificacao, cor, chassi, motor,
-            formaPag,
-            pag1Forma, pag1Valor, pag1Parcelas,
-            pag2Forma, pag2Valor, pag2Parcelas,
-            valorBase, valorFinal, statusFin
-          ]);
-        });
-      }
-    });
-
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = [
-      { wch: 6 }, { wch: 16 }, { wch: 9 }, { wch: 28 }, { wch: 16 }, { wch: 14 },
-      { wch: 22 }, { wch: 22 },
-      { wch: 30 }, { wch: 28 }, { wch: 12 }, { wch: 20 }, { wch: 20 },
-      { wch: 20 },
-      { wch: 14 }, { wch: 14 }, { wch: 12 },
-      { wch: 14 }, { wch: 14 }, { wch: 12 },
-      { wch: 14 }, { wch: 14 }, { wch: 16 }
-    ];
-    XLSX.utils.book_append_sheet(wb, ws, 'Vendas Detalhadas');
-
-    // ── Aba 2: Resumo por Vendedor ─────────────────────────────────────────
-    const porVendedor: Record<string, { qtd: number; total: number }> = {};
-    vendas.filter(v => !v.deletedAt).forEach(v => {
-      const nome = v.vendedor?.nome || 'Sem vendedor';
-      if (!porVendedor[nome]) porVendedor[nome] = { qtd: 0, total: 0 };
-      porVendedor[nome].qtd += 1;
-      porVendedor[nome].total += Number(v.valorTotal);
-    });
-    const resumoHeaders = ['Vendedor', 'Qtd Vendas', 'Total (R$)'];
-    const resumoRows = Object.entries(porVendedor).map(([nome, d]) => [
-      nome, d.qtd, fmtValor(d.total)
-    ]);
-    const wsResumo = XLSX.utils.aoa_to_sheet([resumoHeaders, ...resumoRows]);
-    wsResumo['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 16 }];
-    XLSX.utils.book_append_sheet(wb, wsResumo, 'Resumo por Vendedor');
-
-    // ── Exportar ───────────────────────────────────────────────────────────
-    const dataHora = new Date().toLocaleDateString('pt-BR').replace(/\//g, '-');
-    XLSX.writeFile(wb, `Vendas_${dataHora}.xlsx`);
-
-    api.post('/log-atividades/acao', {
-      acao: 'EXPORTAR_EXCEL',
-      entidade: 'VENDA',
-      detalhes: `Planilha de vendas exportada — ${vendas.filter(v => !v.deletedAt).length} registros`,
-    }).catch(() => {});
-  };
-
   const criarClienteRapido = async () => {
     if (!quickCliente.nome.trim()) return;
     setQuickClienteLoading(true);
@@ -1056,22 +894,7 @@ export function Vendas() {
     <div>
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h1 className="text-2xl font-bold">Vendas</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={handleExportExcel}
-            disabled={vendas.length === 0}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-green-600/50 bg-green-900/20 text-green-400 hover:bg-green-900/40 text-sm font-medium transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-              <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
-              <line x1="8" y1="13" x2="16" y2="13" stroke="white" strokeWidth="1.5"/>
-              <line x1="8" y1="17" x2="12" y2="17" stroke="white" strokeWidth="1.5"/>
-            </svg>
-            Exportar Excel
-          </button>
-          <button onClick={() => setModalOpen(true)} className="btn btn-primary">+ Nova Venda</button>
-        </div>
+        <button onClick={() => setModalOpen(true)} className="btn btn-primary">+ Nova Venda</button>
       </div>
 
       {/* Filtros de busca */}
@@ -1160,8 +983,8 @@ export function Vendas() {
                   <p className="text-gray-300">{pagamentoLabels[venda.formaPagamento] || venda.formaPagamento}</p>
                 </div>
                 <div>
-                  <p className="text-gray-500 text-xs">Data / Hora</p>
-                  <p className="text-gray-300">{new Date(venda.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                  <p className="text-gray-500 text-xs">Data</p>
+                  <p className="text-gray-300">{new Date(venda.createdAt).toLocaleDateString('pt-BR')}</p>
                 </div>
               </div>
               <div className="mt-3 pt-3 border-t border-zinc-700 flex justify-between items-center">
@@ -1726,25 +1549,26 @@ export function Vendas() {
             {(motosSelecionadas.filter(m => m.produtoId).length > 0 || itensSelecionados.filter(i => i.produtoId).length > 0) && (
               <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                 {motosSelecionadas.filter(m => m.produtoId).map((item, idx) => {
-                  const subtotal = roundMoney(item.preco * item.quantidade);
-                  const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
-                  const finalItem = roundMoney(subtotal - descVal);
+                  const subtotal = item.preco * item.quantidade;
+                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
+                  const descontoValor = subtotal * desc / 100;
+                  const finalItem = subtotal - descontoValor;
                   return (
                     <div key={`m-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{item.displayName || 'Moto'}</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      {descVal > 0 && (
+                      {desc > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto:</span>
-                          <span className="text-red-400">- R$ {descVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto ({desc}%):</span>
+                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {descVal > 0 && (
+                      {desc > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -1753,25 +1577,26 @@ export function Vendas() {
                 {itensSelecionados.filter(i => i.produtoId).map((item, idx) => {
                   const produto = produtos.find(p => p.id === parseInt(item.produtoId));
                   const nomeExibicao = produto?.nome || 'Peca';
-                  const subtotal = roundMoney(item.preco * item.quantidade);
-                  const descVal = isCartao ? 0 : roundMoney(parseFloat(item.descontoValor) || 0);
-                  const finalItem = roundMoney(subtotal - descVal);
+                  const subtotal = item.preco * item.quantidade;
+                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
+                  const descontoValor = subtotal * desc / 100;
+                  const finalItem = subtotal - descontoValor;
                   return (
                     <div key={`p-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{nomeExibicao} (x{item.quantidade})</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                       </div>
-                      {descVal > 0 && (
+                      {desc > 0 && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto:</span>
-                          <span className="text-red-400">- R$ {descVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">Desconto ({desc}%):</span>
+                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {descVal > 0 && (
+                      {desc > 0 && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -1873,7 +1698,7 @@ export function Vendas() {
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {vendaDetalhada?.createdAt
-                            ? new Date(vendaDetalhada.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                            ? new Date(vendaDetalhada.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })
                             : ''}
                         </p>
                         <p className="text-[12px] text-gray-300 mt-1">{vendaDetalhada?.loja?.nomeFantasia}</p>
@@ -1894,7 +1719,7 @@ export function Vendas() {
                       <h3 className="text-[10px] font-bold tracking-widest text-orange-500 uppercase border-b border-orange-500/40 pb-1 mb-2">Informações</h3>
                       <p className="text-sm text-gray-400">Vendedor: <span className="text-white">{vendaDetalhada?.vendedor?.nome}</span></p>
                       <p className="text-sm text-gray-400">Loja: <span className="text-white">{vendaDetalhada?.loja?.nomeFantasia || '-'}</span></p>
-                      <p className="text-sm text-gray-400">Data: <span className="text-white">{vendaDetalhada?.createdAt ? new Date(vendaDetalhada.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}</span></p>
+                      <p className="text-sm text-gray-400">Data: <span className="text-white">{vendaDetalhada?.createdAt ? new Date(vendaDetalhada.createdAt).toLocaleDateString('pt-BR') : '-'}</span></p>
                     </div>
                   </div>
 
@@ -1912,22 +1737,12 @@ export function Vendas() {
                       </thead>
                       <tbody>
                         {vendaDetalhada?.itens?.map((item, i) => {
-                          const desc    = Number(item.desconto || 0);
-                          const bruto   = Number(item.precoUnitario) * item.quantidade;
-                          const final   = bruto * (1 - desc / 100);
-                          const chassi  = item.unidadeFisica?.chassi;
-                          const motor   = item.unidadeFisica?.codigoMotor;
+                          const desc = Number(item.desconto || 0);
+                          const bruto = Number(item.precoUnitario) * item.quantidade;
+                          const final = bruto * (1 - desc / 100);
                           return (
                             <tr key={i} className="border-b border-zinc-800">
-                              <td className="p-2">
-                                <div>{item.produto?.nome || item.servico?.nome || '-'}</div>
-                                {(chassi || motor) && (
-                                  <div className="text-[10px] text-zinc-500 mt-0.5 space-x-2">
-                                    {chassi && <span>Chassi: <span className="text-zinc-400">{chassi}</span></span>}
-                                    {motor  && <span>Motor: <span className="text-zinc-400">{motor}</span></span>}
-                                  </div>
-                                )}
-                              </td>
+                              <td className="p-2">{item.produto?.nome || item.servico?.nome || '-'}</td>
                               <td className="p-2 text-center">{item.quantidade}</td>
                               <td className="p-2 text-right">R$ {Number(item.precoUnitario).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                               <td className="p-2 text-right">
