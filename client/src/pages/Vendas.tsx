@@ -86,6 +86,9 @@ interface ItemMoto {
   motor: string;
   cor: string;
   displayName: string;
+  unidadesPorModelo: UnidadeDisponivel[];
+  alertaEstoque: boolean;
+  carregandoUnidades: boolean;
 }
 
 interface PagamentoComp {
@@ -104,6 +107,7 @@ interface UnidadeDisponivel {
   codigoMotor: string;
   cor: string;
   ano: number;
+  status: string;
   displayName: string;
 }
 
@@ -262,7 +266,7 @@ export function Vendas() {
   };
 
   const adicionarMoto = () => {
-    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', cor: '', displayName: '' }]);
+    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', cor: '', displayName: '', unidadesPorModelo: [], alertaEstoque: false, carregandoUnidades: false }]);
   };
 
   const removerMoto = (index: number) => {
@@ -284,11 +288,42 @@ export function Vendas() {
           chassi: '',
           motor: '',
           cor: '',
-          displayName: produto.nome
+          displayName: produto.nome,
+          unidadesPorModelo: [],
+          alertaEstoque: false,
+          carregandoUnidades: true
         };
+        setMotosSelecionadas(novas);
+        if (form.lojaId && value) {
+          api.get<{ estoqueGerencial: number; unidades: UnidadeDisponivel[]; alertaInconsistencia: boolean }>(
+            `/estoque/unidades-disponiveis?lojaId=${form.lojaId}&produtoId=${value}`
+          ).then(resp => {
+            setMotosSelecionadas(prev => {
+              const updated = [...prev];
+              if (updated[index]?.produtoId === value) {
+                updated[index] = {
+                  ...updated[index],
+                  unidadesPorModelo: resp.unidades,
+                  alertaEstoque: resp.alertaInconsistencia,
+                  carregandoUnidades: false
+                };
+              }
+              return updated;
+            });
+          }).catch(() => {
+            setMotosSelecionadas(prev => {
+              const updated = [...prev];
+              if (updated[index]?.produtoId === value) {
+                updated[index] = { ...updated[index], carregandoUnidades: false };
+              }
+              return updated;
+            });
+          });
+        }
+        return;
       }
     } else if (field === 'unidadeId') {
-      const unidade = unidadesDisponiveis.find(u => String(u.id) === value);
+      const unidade = novas[index].unidadesPorModelo.find(u => String(u.id) === value);
       if (unidade) {
         novas[index] = {
           ...novas[index],
@@ -1082,11 +1117,7 @@ export function Vendas() {
               <p className="text-gray-500 text-sm">Nenhuma moto adicionada</p>
             ) : (
               <div className="space-y-3">
-                {motosSelecionadas.map((item, index) => {
-                  const unidadesDoModelo = item.produtoId
-                    ? unidadesDisponiveis.filter(u => u.produtoId === parseInt(item.produtoId))
-                    : [];
-                  return (
+                {motosSelecionadas.map((item, index) => (
                   <div key={index} className="p-3 bg-zinc-800 rounded-lg">
                     <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
                       <CustomSelect
@@ -1155,14 +1186,22 @@ export function Vendas() {
                     )}
                     {item.produtoId && (
                       <>
-                        {unidadesDoModelo.length > 0 && (
+                        {item.carregandoUnidades && (
+                          <div className="mt-3 text-xs text-zinc-400 animate-pulse">Buscando unidades disponíveis...</div>
+                        )}
+                        {!item.carregandoUnidades && item.alertaEstoque && (
+                          <div className="mt-2 p-2 bg-yellow-900/30 border border-yellow-600/40 rounded-lg text-xs text-yellow-400">
+                            ⚠ Estoque gerencial maior que chassis cadastrados. Regularize o estoque antes de vender.
+                          </div>
+                        )}
+                        {!item.carregandoUnidades && item.unidadesPorModelo.length > 0 && (
                           <div className="mt-3">
                             <label className="text-xs text-gray-400 mb-1 block">Unidade física (chassi) *</label>
                             <CustomSelect
                               value={item.unidadeId}
                               onChange={(val) => atualizarMoto(index, 'unidadeId', val)}
                               placeholder="Selecione o chassi..."
-                              options={unidadesDoModelo.map(u => ({
+                              options={item.unidadesPorModelo.map(u => ({
                                 value: String(u.id),
                                 label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
                               }))}
@@ -1199,16 +1238,15 @@ export function Vendas() {
                               </div>
                             </div>
                           </div>
-                        ) : unidadesDoModelo.length === 0 ? (
+                        ) : !item.carregandoUnidades && item.unidadesPorModelo.length === 0 ? (
                           <div className="mt-3 p-3 bg-red-900/20 border border-red-600/40 rounded-lg text-sm text-red-400">
-                            ⚠ Nenhuma unidade disponível para este modelo nesta loja.
+                            ⚠ Nenhuma unidade disponível para este modelo nesta loja. Cadastre o chassi no Estoque antes de vender.
                           </div>
                         ) : null}
                       </>
                     )}
                   </div>
-                  );
-                })}
+                ))}
               </div>
             )}
           </div>

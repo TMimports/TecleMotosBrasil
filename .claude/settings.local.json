@@ -15,7 +15,10 @@
       "PowerShell(npm install *)",
       "PowerShell(npx prisma@5.22.0 generate --schema server/prisma/schema.prisma 2>&1)",
       "PowerShell(npm run *)",
-      "PowerShell(git add *)"
+      "PowerShell(git add *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'fix: chassi e motor preenchidos automaticamente ao selecionar unidade na venda *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

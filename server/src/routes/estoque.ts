@@ -59,6 +59,64 @@ router.get('/logs', requireRole('ADMIN_GERAL', 'DONO_LOJA', 'GERENTE_LOJA'), asy
   }
 });
 
+// ── GET /estoque/unidades-disponiveis?lojaId=&produtoId= ─────────────────────
+// Retorna UnidadeFisica em status ESTOQUE para um produto+loja.
+// Compara com Estoque.quantidade e sinaliza inconsistência quando diverge.
+router.get('/unidades-disponiveis', async (req: AuthRequest, res) => {
+  try {
+    const lojaId   = Number(req.query.lojaId);
+    const produtoId = Number(req.query.produtoId);
+
+    if (!lojaId || !produtoId) {
+      return res.status(400).json({ error: 'lojaId e produtoId são obrigatórios' });
+    }
+
+    const filter = applyTenantFilter(req);
+    if (filter.lojaId && filter.lojaId !== lojaId) {
+      return res.status(403).json({ error: 'Acesso negado a esta loja' });
+    }
+    if (filter.grupoId) {
+      const loja = await prisma.loja.findFirst({ where: { id: lojaId, grupoId: filter.grupoId } });
+      if (!loja) return res.status(403).json({ error: 'Acesso negado a esta loja' });
+    }
+
+    const [estoque, unidades] = await Promise.all([
+      prisma.estoque.findUnique({
+        where: { produtoId_lojaId: { produtoId, lojaId } },
+        select: { quantidade: true }
+      }),
+      prisma.unidadeFisica.findMany({
+        where: { produtoId, lojaId, status: 'ESTOQUE' },
+        include: { produto: { select: { id: true, nome: true, preco: true } } },
+        orderBy: { createdAt: 'asc' }
+      })
+    ]);
+
+    const estoqueGerencial = estoque?.quantidade ?? 0;
+    const resultado = unidades.map(u => ({
+      id: u.id,
+      produtoId: u.produtoId,
+      produtoNome: u.produto.nome,
+      preco: Number(u.produto.preco),
+      chassi: u.chassi,
+      codigoMotor: u.codigoMotor,
+      cor: u.cor,
+      ano: u.ano,
+      status: u.status,
+      displayName: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
+    }));
+
+    res.json({
+      estoqueGerencial,
+      unidades: resultado,
+      alertaInconsistencia: estoqueGerencial > resultado.length
+    });
+  } catch (error) {
+    console.error('Erro ao buscar unidades disponíveis por produto:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 // ── POST /estoque/entrada-avulsa ──────────────────────────────────────────────
 // Entrada manual de estoque sem gerar financeiro.
 // Para PECA: incrementa Estoque + LogEstoque.
