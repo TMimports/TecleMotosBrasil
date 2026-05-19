@@ -314,7 +314,7 @@ export function Vendas() {
   };
 
   const motosSemDadosCompletos = () => {
-    return motosSelecionadas.filter(item => item.produtoId && (!item.chassi || !item.motor));
+    return motosSelecionadas.filter(item => item.produtoId && !item.chassi);
   };
 
   const isCartao = form.formaPagamento === 'CARTAO_DEBITO' || form.formaPagamento === 'CARTAO_CREDITO';
@@ -397,7 +397,7 @@ export function Vendas() {
 
     const motosIncompletas = motosSemDadosCompletos();
     if (motosIncompletas.length > 0) {
-      setFormErro(`🏍️ Preencha o número de chassi e motor para todas as motos (${motosIncompletas.length} moto(s) incompleta(s)).`);
+      setFormErro(`🏍️ Selecione a unidade (chassi) para ${motosIncompletas.length} moto(s). Use o dropdown para preencher automaticamente.`);
       return;
     }
 
@@ -1145,44 +1145,66 @@ export function Vendas() {
                       <>
                         {unidadesDoModelo.length > 0 && (
                           <div className="mt-3">
+                            <label className="text-xs text-gray-400 mb-1 block">Unidade física (chassi) *</label>
                             <CustomSelect
                               value={item.unidadeId}
                               onChange={(val) => atualizarMoto(index, 'unidadeId', val)}
-                              placeholder="Selecione unidade fisica (opcional)..."
-                              options={[
-                                { value: '', label: 'Preencher manualmente' },
-                                ...unidadesDoModelo.map(u => ({
-                                  value: String(u.id),
-                                  label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
-                                }))
-                              ]}
+                              placeholder="Selecione o chassi..."
+                              options={unidadesDoModelo.map(u => ({
+                                value: String(u.id),
+                                label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
+                              }))}
                             />
                           </div>
                         )}
-                        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <div>
-                            <label className="text-xs text-gray-400">Numero do Chassi *</label>
-                            <input
-                              type="text"
-                              value={item.chassi || ''}
-                              onChange={(e) => atualizarMoto(index, 'chassi', e.target.value)}
-                              className="input"
-                              placeholder="Ex: 9C6KE0810PR000000"
-                              required
-                            />
+                        {item.unidadeId ? (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-gray-400">Chassi</label>
+                              <div className="input bg-zinc-900/60 text-green-400 font-mono text-sm flex items-center gap-1">
+                                <span className="text-green-500 shrink-0">✓</span>
+                                {item.chassi || '—'}
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-400">Motor</label>
+                              {item.motor ? (
+                                <div className="input bg-zinc-900/60 text-green-400 font-mono text-sm flex items-center gap-1">
+                                  <span className="text-green-500 shrink-0">✓</span>
+                                  {item.motor}
+                                </div>
+                              ) : (
+                                <div className="mt-1 p-2 bg-yellow-900/30 border border-yellow-600/40 rounded-lg text-xs text-yellow-400">
+                                  ⚠ Motor não cadastrado para esta unidade.
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <label className="text-xs text-gray-400">Numero do Motor *</label>
-                            <input
-                              type="text"
-                              value={item.motor || ''}
-                              onChange={(e) => atualizarMoto(index, 'motor', e.target.value)}
-                              className="input"
-                              placeholder="Ex: E3K6E0000000"
-                              required
-                            />
+                        ) : unidadesDoModelo.length === 0 && (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-xs text-gray-400">Numero do Chassi *</label>
+                              <input
+                                type="text"
+                                value={item.chassi || ''}
+                                onChange={(e) => atualizarMoto(index, 'chassi', e.target.value)}
+                                className="input"
+                                placeholder="Ex: 9C6KE0810PR000000"
+                                required
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-400">Numero do Motor</label>
+                              <input
+                                type="text"
+                                value={item.motor || ''}
+                                onChange={(e) => atualizarMoto(index, 'motor', e.target.value)}
+                                className="input"
+                                placeholder="Ex: E3K6E0000000"
+                              />
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </>
                     )}
                   </div>
