@@ -228,6 +228,16 @@ router.post('/', async (req: AuthRequest, res) => {
       }
     }
 
+    // Cartão não permite desconto — retornar erro claro antes de processar itens
+    if (formaPagamento === 'CARTAO_DEBITO' || formaPagamento === 'CARTAO_CREDITO') {
+      const itensComDesconto = (itens as any[]).filter(item => Number(item.desconto || 0) > 0);
+      if (itensComDesconto.length > 0) {
+        return res.status(400).json({
+          error: 'Desconto não permitido para pagamento em cartão.'
+        });
+      }
+    }
+
     let valorBruto = 0;
     let valorTotal = 0;
     const itensProcessados = [];
@@ -262,10 +272,6 @@ router.post('/', async (req: AuthRequest, res) => {
             }
           }
         }
-      }
-
-      if (formaPagamento === 'CARTAO_DEBITO' || formaPagamento === 'CARTAO_CREDITO') {
-        desconto = 0;
       }
 
       const subtotalBruto = precoUnitario * item.quantidade;

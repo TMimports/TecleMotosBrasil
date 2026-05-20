@@ -47,7 +47,7 @@ router.get('/', async (req: AuthRequest, res) => {
 });
 
 // ── GET /clientes/buscar-cep/:cep ─────────────────────────────────────────────
-router.get('/buscar-cep/:cep', async (req, res) => {
+router.get('/buscar-cep/:cep', async (req: AuthRequest, res) => {
   try {
     const cep = req.params.cep.replace(/\D/g, '');
     if (cep.length !== 8) {
@@ -84,11 +84,7 @@ router.get('/por-documento/:documento', async (req: AuthRequest, res) => {
     }
 
     const cliente = await prisma.cliente.findFirst({
-      where: {
-        cpfCnpj: {
-          in: [docLimpo, req.params.documento]
-        }
-      }
+      where: { cpfCnpj: docLimpo }
     });
 
     if (!cliente) {
@@ -152,9 +148,9 @@ router.post('/', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'CPF/CNPJ inválido. Informe CPF (11 dígitos) ou CNPJ (14 dígitos).' });
     }
 
-    // Verificar duplicidade por CPF/CNPJ
+    // Verificar duplicidade por CPF/CNPJ (sempre normalizado — dígitos apenas)
     const existente = await prisma.cliente.findFirst({
-      where: { cpfCnpj: { in: [docLimpo, cpfCnpj.trim()] } }
+      where: { cpfCnpj: docLimpo }
     });
     if (existente) {
       return res.status(409).json({
@@ -228,10 +224,10 @@ router.put('/:id', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'CPF/CNPJ inválido.' });
     }
 
-    // Verificar duplicidade excluindo o próprio cliente
+    // Verificar duplicidade excluindo o próprio cliente (sempre normalizado — dígitos apenas)
     const existente = await prisma.cliente.findFirst({
       where: {
-        cpfCnpj: { in: [docLimpo, cpfCnpj.trim()] },
+        cpfCnpj: docLimpo,
         id: { not: id }
       }
     });
