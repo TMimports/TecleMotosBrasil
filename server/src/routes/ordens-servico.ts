@@ -242,14 +242,17 @@ router.post('/', async (req: AuthRequest, res) => {
         }
 
         const subtotal = subtotalBruto * (1 - desconto / 100);
-        valorTotal += subtotal;
+        // Peças não cobradas não entram no total financeiro, mas entram no valorBruto
+        const cobrada = item.cobrada !== false; // default true
+        if (cobrada) valorTotal += subtotal;
 
         itensProcessados.push({
           produtoId: item.produtoId || null,
           servicoId: item.servicoId || null,
           quantidade: item.quantidade,
           precoUnitario: Number(item.precoUnitario),
-          desconto
+          desconto,
+          cobrada
         });
       }
     }
@@ -368,6 +371,32 @@ router.put('/:id/confirmar', requireRole('ADMIN_GERAL', 'GERENTE_LOJA', 'DONO_LO
 
     if (!osAtual) {
       return res.status(404).json({ error: 'OS não encontrada' });
+    }
+
+    // ACIONAMENTO_GARANTIA: verificar e baixar estoque das peças ao confirmar
+    if (osAtual.tipo === 'ACIONAMENTO_GARANTIA') {
+      const itensPecas = osAtual.itens
+        .filter(i => i.produtoId)
+        .map(i => ({ produtoId: i.produtoId!, quantidade: i.quantidade }));
+
+      if (itensPecas.length > 0) {
+        const verificacao = await InventoryService.verificarItensVenda(itensPecas, osAtual.lojaId);
+        if (!verificacao.valido) {
+          return res.status(400).json({
+            error: 'Estoque insuficiente para concluir OS de garantia',
+            detalhes: verificacao.erros
+          });
+        }
+        const resultadoBaixa = await InventoryService.processarBaixaOS(
+          osAtual.id,
+          itensPecas,
+          osAtual.lojaId,
+          req.user!.id
+        );
+        if (!resultadoBaixa.success) {
+          return res.status(400).json({ error: resultadoBaixa.error });
+        }
+      }
     }
 
     const os = await prisma.ordemServico.update({
@@ -492,6 +521,36 @@ router.put('/:id/converter-os', async (req: AuthRequest, res) => {
     res.json(os);
   } catch (error) {
     console.error('Erro ao converter orçamento:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+router.put('/:id', async (req: AuthRequest, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { clienteId, tecnico, motoDescricao, observacoes } = req.body;
+
+    const osAtual = await prisma.ordemServico.findUnique({ where: { id } });
+    if (!osAtual) return res.status(404).json({ error: 'OS não encontrada' });
+
+    if (osAtual.confirmadaFinanceiro || osAtual.status === 'EXECUTADA') {
+      return res.status(400).json({ error: 'Não é possível editar OS finalizada ou confirmada' });
+    }
+
+    const os = await prisma.ordemServico.update({
+      where: { id },
+      data: {
+        ...(clienteId ? { clienteId: Number(clienteId) } : {}),
+        ...(tecnico !== undefined ? { tecnico: tecnico || null } : {}),
+        ...(motoDescricao !== undefined ? { motoDescricao } : {}),
+        ...(observacoes !== undefined ? { observacoes } : {})
+      },
+      include: { cliente: true, loja: true, itens: { include: { produto: true, servico: true } } }
+    });
+
+    res.json(os);
+  } catch (error) {
+    console.error('Erro ao editar OS:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

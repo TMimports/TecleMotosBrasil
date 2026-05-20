@@ -10,6 +10,7 @@ interface OrdemServicoItem {
   id: number;
   quantidade: number;
   precoUnitario: number;
+  cobrada?: boolean;
   produto?: { nome: string };
   servico?: { nome: string };
 }
@@ -83,6 +84,7 @@ interface ItemPeca {
   produtoId: string;
   quantidade: number;
   preco: number;
+  cobrada: boolean;
 }
 
 interface ConfigDescontos {
@@ -128,6 +130,19 @@ export function OrdensServico() {
   const [garantias, setGarantias] = useState<any[]>([]);
   const [garantiaBusca, setGarantiaBusca] = useState('');
   const [garantiasLoading, setGarantiasLoading] = useState(false);
+
+  // ── Editar OS ────────────────────────────────────────────────────────────
+  const [editOsId, setEditOsId] = useState<number | null>(null);
+  const [editOsForm, setEditOsForm] = useState({
+    tecnico: '',
+    motoModelo: '',
+    motoDescricao: '',
+    motoChassi: '',
+    motoMotor: '',
+    observacoes: ''
+  });
+  const [editOsSaving, setEditOsSaving] = useState(false);
+  const [editOsErro, setEditOsErro] = useState('');
 
   // ── Laudo ────────────────────────────────────────────────────────────────
   const [laudoOsId, setLaudoOsId] = useState<number | null>(null);
@@ -205,6 +220,59 @@ export function OrdensServico() {
     finally { setGarantiasLoading(false); }
   };
 
+  const abrirEditOs = async (os: OrdemServico) => {
+    try {
+      const osData = await api.get<OrdemServicoFull>(`/os/${os.id}`);
+      let motoInfo: any = { modelo: '', descricao: '', chassi: '', motor: '' };
+      if (osData.motoDescricao) {
+        try { motoInfo = { ...motoInfo, ...JSON.parse(osData.motoDescricao) }; } catch { motoInfo.descricao = osData.motoDescricao; }
+      }
+      let textoObs = '';
+      if (osData.observacoes) {
+        try { const p = JSON.parse(osData.observacoes); textoObs = p.texto || ''; } catch { textoObs = osData.observacoes; }
+      }
+      setEditOsForm({
+        tecnico: osData.tecnico || '',
+        motoModelo: motoInfo.modelo || '',
+        motoDescricao: motoInfo.descricao || '',
+        motoChassi: motoInfo.chassi || '',
+        motoMotor: motoInfo.motor || '',
+        observacoes: textoObs
+      });
+      setEditOsErro('');
+      setEditOsId(os.id);
+    } catch (err: any) {
+      alert(err.message || 'Erro ao carregar OS');
+    }
+  };
+
+  const salvarEditOs = async () => {
+    if (!editOsId) return;
+    setEditOsSaving(true);
+    setEditOsErro('');
+    try {
+      const motoInfo = JSON.stringify({
+        modelo: editOsForm.motoModelo.trim(),
+        descricao: editOsForm.motoDescricao.trim(),
+        chassi: editOsForm.motoChassi.trim(),
+        motor: editOsForm.motoMotor.trim()
+      });
+      let obsJson: any = {};
+      if (editOsForm.observacoes.trim()) obsJson.texto = editOsForm.observacoes.trim();
+      await api.put(`/os/${editOsId}`, {
+        tecnico: editOsForm.tecnico || null,
+        motoDescricao: motoInfo,
+        observacoes: Object.keys(obsJson).length ? JSON.stringify(obsJson) : null
+      });
+      setEditOsId(null);
+      loadData();
+    } catch (err: any) {
+      setEditOsErro(err.message || 'Erro ao salvar edição');
+    } finally {
+      setEditOsSaving(false);
+    }
+  };
+
   const salvarLaudo = async () => {
     if (!laudoOsId) return;
     setLaudoSaving(true);
@@ -239,7 +307,15 @@ export function OrdensServico() {
     try {
       const encontrado = await api.get<{ id: number; nome: string }>(`/clientes/por-documento/${doc}`).catch(() => null);
       if (encontrado) {
-        setQuickClienteOSErro(`${doc.length === 11 ? 'CPF' : 'CNPJ'} já cadastrado para: ${encontrado.nome}. Não é possível duplicar.`);
+        // Auto-seleciona o cliente existente e fecha o modal
+        if (!clientes.find(c => c.id === encontrado.id)) {
+          setClientes(prev => [...prev, encontrado]);
+        }
+        setForm(f => ({ ...f, clienteId: String(encontrado.id) }));
+        setShowQuickClienteOS(false);
+        setQuickClienteOS({ nome: '', cpfCnpj: '', telefone: '', email: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' });
+        setQuickClienteOSErro('');
+        alert(`Cliente já cadastrado: ${encontrado.nome}. Selecionado automaticamente.`);
         return;
       }
       if (doc.length === 14) {
@@ -300,7 +376,7 @@ export function OrdensServico() {
   };
 
   const adicionarPeca = () => {
-    setPecasSelecionadas([...pecasSelecionadas, { produtoId: '', quantidade: 1, preco: 0 }]);
+    setPecasSelecionadas([...pecasSelecionadas, { produtoId: '', quantidade: 1, preco: 0, cobrada: true }]);
   };
 
   const removerPeca = (index: number) => {
@@ -320,10 +396,17 @@ export function OrdensServico() {
 
   const calcularTotal = () => {
     const totalServicos = servicosSelecionados.reduce((acc, s) => acc + (s.preco * s.quantidade), 0);
-    const totalPecas = pecasSelecionadas.reduce((acc, p) => acc + (p.preco * p.quantidade), 0);
     const descontoServicos = totalServicos * Number(form.descontoServico) / 100;
-    const descontoPecas = totalPecas * Number(form.desconto) / 100;
-    return totalServicos - descontoServicos + totalPecas - descontoPecas;
+    // Apenas peças cobradas entram no total
+    const pecasCobradas = pecasSelecionadas.filter(p => p.cobrada !== false);
+    const totalPecasCobradas = pecasCobradas.reduce((acc, p) => acc + (p.preco * p.quantidade), 0);
+    const descontoPecasCobradas = totalPecasCobradas * Number(form.desconto) / 100;
+    return parseFloat((totalServicos - descontoServicos + totalPecasCobradas - descontoPecasCobradas).toFixed(2));
+  };
+
+  const calcularTotalPecasNaoCobradas = () => {
+    const pecasNaoCobradas = pecasSelecionadas.filter(p => p.cobrada === false);
+    return pecasNaoCobradas.reduce((acc, p) => acc + (p.preco * p.quantidade), 0);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -366,7 +449,8 @@ export function OrdensServico() {
             produtoId: parseInt(p.produtoId),
             quantidade: p.quantidade,
             precoUnitario: p.preco,
-            desconto: Number(form.desconto) || 0
+            desconto: Number(form.desconto) || 0,
+            cobrada: p.cobrada !== false
           });
         }
       });
@@ -514,28 +598,53 @@ export function OrdensServico() {
                   </span>
                 </div>
                 <div className="flex gap-2 flex-wrap">
+                  {/* Botão Laudo disponível para todos os tipos enquanto não finalizada */}
+                  {!os.confirmadaFinanceiro && os.status !== 'EXECUTADA' && (
+                    <button
+                      onClick={() => {
+                        setLaudoOsId(os.id);
+                        setLaudoForm({ parecerTecnico: '', parecerAdmin: '', responsavelTecnico: '', responsavelAdmin: '', statusLaudo: 'EM_ANALISE' });
+                      }}
+                      className="btn btn-sm btn-secondary"
+                    >
+                      Laudo
+                    </button>
+                  )}
+                  {/* Botão Editar — OS em execução não finalizada */}
+                  {!os.confirmadaFinanceiro && os.status !== 'EXECUTADA' && (
+                    <button onClick={() => abrirEditOs(os)} className="btn btn-sm btn-secondary">
+                      Editar
+                    </button>
+                  )}
+                  {/* Botão Excluir — apenas admins/gerentes */}
+                  {!os.confirmadaFinanceiro && os.status !== 'EXECUTADA' &&
+                    (user?.role === 'ADMIN_GERAL' || user?.role === 'GERENTE_LOJA' || user?.role === 'DONO_LOJA') && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Deseja realmente excluir esta OS? Esta ação não pode ser desfeita.')) return;
+                        try {
+                          await api.delete(`/os/${os.id}`);
+                          loadData();
+                        } catch (err: any) {
+                          alert(err.message || 'Erro ao excluir OS');
+                        }
+                      }}
+                      className="btn btn-sm btn-danger"
+                    >
+                      Excluir
+                    </button>
+                  )}
                   {os.tipo === 'ORCAMENTO' && os.status === 'ORCAMENTO' && (
-                    <>
-                      <button
-                        onClick={() => {
-                          setLaudoOsId(os.id);
-                          setLaudoForm({ parecerTecnico: '', parecerAdmin: '', responsavelTecnico: '', responsavelAdmin: '', statusLaudo: 'EM_ANALISE' });
-                        }}
-                        className="btn btn-sm btn-secondary"
-                      >
-                        Laudo
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!confirm('Converter este orçamento em OS? O estoque será baixado.')) return;
-                          try { await api.put(`/os/${os.id}/converter-os`, {}); loadData(); }
-                          catch (err: any) { alert(err.message); }
-                        }}
-                        className="btn btn-sm btn-success"
-                      >
-                        Converter em OS
-                      </button>
-                    </>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Converter este orçamento em OS? O estoque será baixado.')) return;
+                        try { await api.put(`/os/${os.id}/converter-os`, {}); loadData(); }
+                        catch (err: any) { alert(err.message); }
+                      }}
+                      className="btn btn-sm btn-success"
+                    >
+                      Converter em OS
+                    </button>
                   )}
                   {os.status === 'EM_EXECUCAO' && !os.confirmadaFinanceiro && (
                     <button
@@ -638,16 +747,21 @@ export function OrdensServico() {
                 className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-purple-500/50"
               />
               {garantiasLoading && <p className="text-xs text-zinc-500 animate-pulse">Carregando garantias...</p>}
-              {garantiaBusca && !garantiasLoading && (() => {
+              {(!garantiasLoading && (garantiaBusca || form.clienteId)) && (() => {
                 const q = garantiaBusca.toLowerCase();
-                const encontradas = garantias.filter(g =>
-                  (g.cliente?.nome || '').toLowerCase().includes(q) ||
-                  (g.unidade?.chassi || '').toLowerCase().includes(q) ||
-                  (g.unidade?.produto?.nome || '').toLowerCase().includes(q) ||
-                  (g.unidade?.codigoMotor || '').toLowerCase().includes(q)
-                );
+                const encontradas = garantias.filter(g => {
+                  const matchCliente = form.clienteId ? g.clienteId === Number(form.clienteId) : true;
+                  const matchBusca = !garantiaBusca || (
+                    (g.cliente?.nome || '').toLowerCase().includes(q) ||
+                    (g.unidade?.chassi || '').toLowerCase().includes(q) ||
+                    (g.unidade?.produto?.nome || '').toLowerCase().includes(q) ||
+                    (g.unidade?.codigoMotor || '').toLowerCase().includes(q)
+                  );
+                  const garantiaAtiva = new Date(g.dataFim) > new Date();
+                  return matchCliente && matchBusca && garantiaAtiva;
+                });
                 return encontradas.length === 0 ? (
-                  <p className="text-xs text-zinc-500">Nenhuma garantia encontrada.</p>
+                  <p className="text-xs text-zinc-500">Nenhuma garantia ativa encontrada{form.clienteId ? ' para este cliente' : ''}.</p>
                 ) : (
                   <div className="space-y-1 max-h-48 overflow-y-auto">
                     {encontradas.map((g: any) => (
@@ -693,9 +807,16 @@ export function OrdensServico() {
             </div>
             <CustomSelect
               value={form.clienteId}
-              onChange={(val) => { setForm({ ...form, clienteId: val }); setFormErro(''); }}
+              onChange={(val) => {
+                setForm({ ...form, clienteId: val });
+                setFormErro('');
+                if (form.tipo === 'ACIONAMENTO_GARANTIA') carregarGarantias();
+              }}
               options={clientes.map(c => ({ value: String(c.id), label: c.nome }))}
             />
+            {form.tipo === 'ACIONAMENTO_GARANTIA' && form.clienteId && (
+              <p className="text-xs text-purple-400 mt-1">Garantias ativas deste cliente aparecem abaixo automaticamente.</p>
+            )}
           </div>
 
           {/* ── Dados da Moto/Veículo ──────────────────────────────────── */}
@@ -791,30 +912,47 @@ export function OrdensServico() {
             ) : (
               <div className="space-y-2">
                 {pecasSelecionadas.map((item, index) => (
-                  <div key={index} className="flex flex-col sm:flex-row gap-2 sm:items-center">
-                    <CustomSelect
-                      value={item.produtoId}
-                      onChange={(val) => atualizarPeca(index, 'produtoId', val)}
-                      className="flex-1"
-                      options={produtos.map(p => {
-                        const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : p.estoque <= 3 ? ` [Baixo: ${p.estoque}]` : ` [${p.estoque} un]`;
-                        return { value: String(p.id), label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}` };
-                      })}
-                    />
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="number"
-                        min="1"
-                        value={item.quantidade}
-                        onChange={(e) => atualizarPeca(index, 'quantidade', parseInt(e.target.value))}
-                        className="input w-20"
+                  <div key={index} className="flex flex-col gap-1.5 border border-zinc-700/50 rounded-lg p-2.5">
+                    <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                      <CustomSelect
+                        value={item.produtoId}
+                        onChange={(val) => atualizarPeca(index, 'produtoId', val)}
+                        className="flex-1"
+                        options={produtos.map(p => {
+                          const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : p.estoque <= 3 ? ` [Baixo: ${p.estoque}]` : ` [${p.estoque} un]`;
+                          return { value: String(p.id), label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}` };
+                        })}
                       />
-                      <span className="text-green-400 w-24 text-right">
-                        R$ {(item.preco * item.quantidade).toFixed(2)}
-                      </span>
-                      <button type="button" onClick={() => removerPeca(index)} className="text-red-500 hover:text-red-400">
-                        X
-                      </button>
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="number"
+                          min="1"
+                          value={item.quantidade}
+                          onChange={(e) => atualizarPeca(index, 'quantidade', parseInt(e.target.value))}
+                          className="input w-20"
+                        />
+                        <span className={`w-24 text-right text-sm font-semibold ${item.cobrada !== false ? 'text-green-400' : 'text-zinc-500 line-through'}`}>
+                          R$ {(item.preco * item.quantidade).toFixed(2)}
+                        </span>
+                        <button type="button" onClick={() => removerPeca(index)} className="text-red-500 hover:text-red-400">
+                          X
+                        </button>
+                      </div>
+                    </div>
+                    {/* Toggle cobrada / não cobrada */}
+                    <div className="flex items-center gap-3 pt-0.5">
+                      <label className={`flex items-center gap-1.5 cursor-pointer text-xs font-medium px-2.5 py-1 rounded-full transition-colors ${item.cobrada !== false ? 'bg-green-500/15 text-green-400' : 'bg-zinc-700 text-zinc-400'}`}>
+                        <input
+                          type="checkbox"
+                          checked={item.cobrada !== false}
+                          onChange={e => atualizarPeca(index, 'cobrada', e.target.checked)}
+                          className="accent-green-500 w-3.5 h-3.5"
+                        />
+                        Cobrar do cliente
+                      </label>
+                      {item.cobrada === false && (
+                        <span className="text-xs text-zinc-500">Baixa o estoque, mas não soma no total</span>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -910,17 +1048,21 @@ export function OrdensServico() {
                 {pecasSelecionadas.filter(p => p.produtoId).map((item, idx) => {
                   const peca = produtos.find(p => p.id === parseInt(item.produtoId));
                   const subtotal = item.preco * item.quantidade;
-                  const descontoValor = subtotal * Number(form.desconto) / 100;
+                  const descontoValor = item.cobrada !== false ? subtotal * Number(form.desconto) / 100 : 0;
+                  const naoCobrada = item.cobrada === false;
                   return (
-                    <div key={idx} className="text-xs border-b border-zinc-700/30 pb-1 last:border-0">
+                    <div key={idx} className={`text-xs border-b border-zinc-700/30 pb-1 last:border-0 ${naoCobrada ? 'opacity-70' : ''}`}>
                       <div className="flex justify-between text-gray-300">
                         <span>{peca?.nome || 'Peca'} (x{item.quantidade})</span>
+                        {naoCobrada && <span className="text-zinc-500 italic">não cobrada</span>}
                       </div>
-                      <div className="flex justify-between mt-1">
-                        <span className="text-gray-500">Original:</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                      </div>
-                      {Number(form.desconto) > 0 && (
+                      {!naoCobrada && (
+                        <div className="flex justify-between mt-1">
+                          <span className="text-gray-500">Valor:</span>
+                          <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                      )}
+                      {!naoCobrada && Number(form.desconto) > 0 && (
                         <>
                           <div className="flex justify-between">
                             <span className="text-gray-500">Desconto ({form.desconto}%):</span>
@@ -939,31 +1081,44 @@ export function OrdensServico() {
             )}
 
             <div className="space-y-2 pt-2">
+              {/* Mão de obra */}
               <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-400">Servicos (Bruto):</span>
+                <span className="text-gray-400">Mão de obra (bruto):</span>
                 <span className="text-white">
                   R$ {servicosSelecionados.reduce((acc, item) => acc + (item.preco * item.quantidade), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
               {Number(form.descontoServico) > 0 && (
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-gray-400">Desconto Servicos ({form.descontoServico}%):</span>
+                  <span className="text-gray-400">Desconto serviços ({form.descontoServico}%):</span>
                   <span className="text-red-400">
                     - R$ {(servicosSelecionados.reduce((acc, item) => acc + (item.preco * item.quantidade), 0) * Number(form.descontoServico) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
               )}
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-400">Pecas (Bruto):</span>
-                <span className="text-white">
-                  R$ {pecasSelecionadas.reduce((acc, item) => acc + (item.preco * item.quantidade), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-              {Number(form.desconto) > 0 && (
+              {/* Peças cobradas */}
+              {pecasSelecionadas.filter(p => p.cobrada !== false).length > 0 && (
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-gray-400">Desconto Pecas ({form.desconto}%):</span>
+                  <span className="text-gray-400">Peças cobradas:</span>
+                  <span className="text-white">
+                    R$ {pecasSelecionadas.filter(p => p.cobrada !== false).reduce((acc, p) => acc + (p.preco * p.quantidade), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+              {Number(form.desconto) > 0 && pecasSelecionadas.filter(p => p.cobrada !== false).length > 0 && (
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-400">Desconto peças ({form.desconto}%):</span>
                   <span className="text-red-400">
-                    - R$ {(pecasSelecionadas.reduce((acc, item) => acc + (item.preco * item.quantidade), 0) * Number(form.desconto) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    - R$ {(pecasSelecionadas.filter(p => p.cobrada !== false).reduce((acc, p) => acc + (p.preco * p.quantidade), 0) * Number(form.desconto) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+              {/* Peças não cobradas */}
+              {calcularTotalPecasNaoCobradas() > 0 && (
+                <div className="flex justify-between items-center text-sm border border-dashed border-zinc-600 rounded px-2 py-1">
+                  <span className="text-zinc-500">Peças utilizadas (não cobradas):</span>
+                  <span className="text-zinc-500">
+                    R$ {calcularTotalPecasNaoCobradas().toLocaleString('pt-BR', { minimumFractionDigits: 2 })} — baixa estoque
                   </span>
                 </div>
               )}
@@ -1081,6 +1236,67 @@ export function OrdensServico() {
         </div>
       )}
 
+      {/* ── Modal de Edição de OS ──────────────────────────────────── */}
+      {editOsId && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+          <div className="bg-[#18181b] border border-[#27272a] rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="p-5 border-b border-[#27272a] flex items-center justify-between sticky top-0 bg-[#18181b] z-10">
+              <h3 className="font-bold text-white">Editar OS #{editOsId}</h3>
+              <button onClick={() => setEditOsId(null)} className="text-zinc-400 hover:text-white text-xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {editOsErro && (
+                <div className="p-3 bg-red-900/30 border border-red-500/50 rounded-lg text-sm text-red-400">{editOsErro}</div>
+              )}
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Técnico</label>
+                <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                  value={editOsForm.tecnico} onChange={e => setEditOsForm(p => ({ ...p, tecnico: e.target.value }))} placeholder="Nome do técnico" />
+              </div>
+              <div className="border border-zinc-700/60 rounded-lg p-3 space-y-3">
+                <p className="text-xs font-medium text-zinc-400">Moto / Veículo</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Modelo</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={editOsForm.motoModelo} onChange={e => setEditOsForm(p => ({ ...p, motoModelo: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Descrição</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50"
+                      value={editOsForm.motoDescricao} onChange={e => setEditOsForm(p => ({ ...p, motoDescricao: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Chassi</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50 font-mono"
+                      value={editOsForm.motoChassi} onChange={e => setEditOsForm(p => ({ ...p, motoChassi: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-400 block mb-1">Código do Motor</label>
+                    <input type="text" className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 h-10 text-sm outline-none focus:border-orange-500/50 font-mono"
+                      value={editOsForm.motoMotor} onChange={e => setEditOsForm(p => ({ ...p, motoMotor: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Observações</label>
+                <textarea className="w-full bg-[#09090b] border border-[#27272a] text-white rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500/50 resize-none"
+                  rows={3} value={editOsForm.observacoes} onChange={e => setEditOsForm(p => ({ ...p, observacoes: e.target.value }))} />
+              </div>
+            </div>
+            <div className="p-5 pt-0 flex gap-3 justify-end">
+              <button onClick={() => setEditOsId(null)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancelar</button>
+              <button onClick={salvarEditOs} disabled={editOsSaving}
+                className="px-4 py-2 text-sm bg-orange-500 hover:bg-orange-600 text-white rounded-lg disabled:opacity-50 font-medium transition-colors">
+                {editOsSaving ? 'Salvando...' : 'Salvar Alterações'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Modal de Laudo Técnico/Administrativo ──────────────────── */}
       {laudoOsId && (
         <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
@@ -1189,17 +1405,32 @@ export function OrdensServico() {
                   <th className="text-center p-2 text-gray-400 text-sm">Qtd</th>
                   <th className="text-right p-2 text-gray-400 text-sm">Valor Unit.</th>
                   <th className="text-right p-2 text-gray-400 text-sm">Subtotal</th>
+                  <th className="text-center p-2 text-gray-400 text-sm">Cobrado</th>
                 </tr>
               </thead>
               <tbody>
-                {osDetalhada?.itens?.map((item, i) => (
-                  <tr key={i} className="border-b border-zinc-800">
-                    <td className="p-2">{item.servico?.nome || item.produto?.nome}</td>
-                    <td className="p-2 text-center">{item.quantidade}</td>
-                    <td className="p-2 text-right">R$ {Number(item.precoUnitario).toFixed(2)}</td>
-                    <td className="p-2 text-right">R$ {(Number(item.precoUnitario) * item.quantidade).toFixed(2)}</td>
-                  </tr>
-                ))}
+                {osDetalhada?.itens?.map((item, i) => {
+                  const naoCobraEhPeca = item.produto && item.cobrada === false;
+                  return (
+                    <tr key={i} className={`border-b border-zinc-800 ${naoCobraEhPeca ? 'opacity-60' : ''}`}>
+                      <td className="p-2">{item.servico?.nome || item.produto?.nome}</td>
+                      <td className="p-2 text-center">{item.quantidade}</td>
+                      <td className="p-2 text-right">R$ {Number(item.precoUnitario).toFixed(2)}</td>
+                      <td className={`p-2 text-right ${naoCobraEhPeca ? 'line-through text-zinc-500' : ''}`}>
+                        R$ {(Number(item.precoUnitario) * item.quantidade).toFixed(2)}
+                      </td>
+                      <td className="p-2 text-center">
+                        {item.produto ? (
+                          item.cobrada === false
+                            ? <span className="text-xs text-zinc-500">Não cobrada</span>
+                            : <span className="text-xs text-green-400">Sim</span>
+                        ) : (
+                          <span className="text-xs text-blue-400">Serviço</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             </div>
@@ -1209,12 +1440,41 @@ export function OrdensServico() {
               <span className="text-green-400">R$ {Number(osDetalhada?.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
             </div>
 
-            {osDetalhada?.observacoes && (
-              <div className="mt-4 p-3 bg-zinc-800 rounded text-sm">
-                <strong className="text-gray-400">Observacoes:</strong>
-                <p className="mt-1">{osDetalhada.observacoes}</p>
-              </div>
-            )}
+            {osDetalhada?.observacoes && (() => {
+              try {
+                const obs = JSON.parse(osDetalhada.observacoes!);
+                const laudo = obs.laudo;
+                const textoObs = obs.texto;
+                return (
+                  <>
+                    {textoObs && (
+                      <div className="mt-4 p-3 bg-zinc-800 rounded text-sm">
+                        <strong className="text-gray-400">Observacoes:</strong>
+                        <p className="mt-1">{textoObs}</p>
+                      </div>
+                    )}
+                    {laudo && (
+                      <div className="mt-4 p-3 bg-zinc-900 border border-zinc-700 rounded text-sm space-y-2">
+                        <strong className="text-orange-400 block">Laudo Técnico / Administrativo</strong>
+                        {laudo.responsavelTecnico && <p className="text-gray-400">Resp. Técnico: <span className="text-white">{laudo.responsavelTecnico}</span></p>}
+                        {laudo.responsavelAdmin && <p className="text-gray-400">Resp. Administrativo: <span className="text-white">{laudo.responsavelAdmin}</span></p>}
+                        {laudo.parecerTecnico && <p className="text-gray-400">Parecer Técnico: <span className="text-white">{laudo.parecerTecnico}</span></p>}
+                        {laudo.parecerAdmin && <p className="text-gray-400">Parecer Adm.: <span className="text-white">{laudo.parecerAdmin}</span></p>}
+                        {laudo.status && <p className="text-gray-400">Status: <span className={`font-semibold ${laudo.status === 'REPROVADO' ? 'text-red-400' : laudo.status.startsWith('APROVADO') ? 'text-green-400' : 'text-yellow-400'}`}>{laudo.status.replace(/_/g, ' ')}</span></p>}
+                        {laudo.data && <p className="text-gray-500 text-xs">Data: {new Date(laudo.data).toLocaleString('pt-BR')}</p>}
+                      </div>
+                    )}
+                  </>
+                );
+              } catch {
+                return (
+                  <div className="mt-4 p-3 bg-zinc-800 rounded text-sm">
+                    <strong className="text-gray-400">Observacoes:</strong>
+                    <p className="mt-1">{osDetalhada.observacoes}</p>
+                  </div>
+                );
+              }
+            })()}
           </div>
 
           <div className="flex gap-2 justify-end border-t border-zinc-700 pt-4">
