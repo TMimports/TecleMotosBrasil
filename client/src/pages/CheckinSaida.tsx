@@ -19,7 +19,7 @@ interface VendaItem {
 }
 
 interface VendaCheckin {
-  id: number;
+  id?: number;
   numeroSerie: string;
   checklistJson?: string;
   quilometragem?: number;
@@ -29,6 +29,8 @@ interface VendaCheckin {
   nomeCliente?: string;
   nomeVendedor?: string;
   nomeEntregador?: string;
+  assinadoClienteAt?: string;
+  assinadoVendedorAt?: string;
   finalizadoAt?: string;
 }
 
@@ -233,6 +235,28 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
         }
       );
       setSeriesFinais({ checkin: resultado.numeroSerieCheckin, recibo: resultado.numeroSerieRecibo });
+
+      // Atualiza venda em memória com o checkin recém-salvo para que o botão
+      // "Imprimir Laudo" tenha acesso às assinaturas mesmo depois do canvas
+      // ter sido desmontado.
+      setVenda(prev => prev ? {
+        ...prev,
+        checkin: {
+          ...(prev.checkin || {} as any),
+          numeroSerie: resultado.numeroSerieCheckin,
+          checklistJson: JSON.stringify(checklist),
+          assinaturaCliente,
+          assinaturaVendedor,
+          assinaturaEntregador: assinaturaEntregador || undefined,
+          nomeCliente:    venda?.cliente?.nome,
+          nomeVendedor:   venda?.vendedor?.nome,
+          nomeEntregador: nomeEntregador || undefined,
+          assinadoClienteAt: agora,
+          assinadoVendedorAt: agora,
+          finalizadoAt: agora,
+        },
+      } : prev);
+
       setConcluido(true);
     } catch (e: any) {
       setErro(e.message || 'Erro ao finalizar check-in');
@@ -242,14 +266,21 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
   };
 
   // ── Imprimir laudo ──────────────────────────────────────────────────────────
+  // Prioriza as assinaturas salvas no banco (venda.checkin) sobre o canvas em memória.
+  // Motivo: depois de finalizar o check-in o componente troca de tela ("concluído")
+  // e os refs do signature-pad ficam null/vazios — sem este fallback o <img src="">
+  // ficaria em branco e as assinaturas sumiriam do laudo.
   const imprimirLaudo = () => {
     if (!venda) return;
-    const assinaturaClienteB64    = sigClienteRef.current?.isEmpty()
-      ? '' : sigClienteRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5) || '';
-    const assinaturaVendedorB64   = sigVendedorRef.current?.isEmpty()
-      ? '' : sigVendedorRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5) || '';
-    const assinaturaEntregadorB64 = sigEntregadorRef.current?.isEmpty()
-      ? '' : sigEntregadorRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5) || '';
+    const tryCanvas = (ref: React.RefObject<SignatureCanvas | null>): string => {
+      try {
+        if (!ref.current || ref.current.isEmpty()) return '';
+        return ref.current.getTrimmedCanvas().toDataURL('image/jpeg', 0.5) || '';
+      } catch { return ''; }
+    };
+    const assinaturaClienteB64    = venda.checkin?.assinaturaCliente    || tryCanvas(sigClienteRef);
+    const assinaturaVendedorB64   = venda.checkin?.assinaturaVendedor   || tryCanvas(sigVendedorRef);
+    const assinaturaEntregadorB64 = venda.checkin?.assinaturaEntregador || tryCanvas(sigEntregadorRef);
 
     const nomeFantasia = (venda.loja?.nomeFantasia || '').toLowerCase();
     const isTM = nomeFantasia.includes('tm import') || nomeFantasia.includes('importa');
