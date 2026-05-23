@@ -28,7 +28,11 @@
       "Bash(Get-ChildItem *)",
       "PowerShell(Get-ChildItem *)",
       "Bash(npx prisma@5.22.0 generate --schema server/prisma/schema.prisma)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(npm list *)",
+      "Bash(npm outdated *)",
+      "Bash(npm audit *)",
+      "Bash(npm view *)"
     ]
   }
 }

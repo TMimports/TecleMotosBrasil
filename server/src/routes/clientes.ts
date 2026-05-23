@@ -143,6 +143,10 @@ router.post('/', async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'CPF/CNPJ é obrigatório' });
     }
 
+    if (!telefone?.trim() && !email?.trim()) {
+      return res.status(400).json({ error: 'Informe pelo menos email ou telefone para envio dos documentos da venda.' });
+    }
+
     const docLimpo = normalizarDocumento(cpfCnpj);
     if (docLimpo.length !== 11 && docLimpo.length !== 14) {
       return res.status(400).json({ error: 'CPF/CNPJ inválido. Informe CPF (11 dígitos) ou CNPJ (14 dígitos).' });
@@ -217,6 +221,10 @@ router.put('/:id', async (req: AuthRequest, res) => {
 
     if (!cpfCnpj?.trim()) {
       return res.status(400).json({ error: 'CPF/CNPJ é obrigatório' });
+    }
+
+    if (!telefone?.trim() && !email?.trim()) {
+      return res.status(400).json({ error: 'Informe pelo menos email ou telefone para envio dos documentos da venda.' });
     }
 
     const docLimpo = normalizarDocumento(cpfCnpj);

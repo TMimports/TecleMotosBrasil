@@ -1,4 +1,5 @@
 import express from 'express';
+import helmet from 'helmet';
 import cors from 'cors';
 import path from 'path';
 import { PrismaClient } from '@prisma/client';
@@ -82,6 +83,10 @@ const ALLOWED_ORIGINS = [
   ...(isDev ? ['http://localhost:5173', 'http://localhost:3001', 'http://localhost:5000'] : []),
 ];
 
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: false, // gerenciado pelo frontend (React SPA)
+}));
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin)) {

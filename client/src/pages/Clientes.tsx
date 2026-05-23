@@ -148,6 +148,11 @@ export function Clientes() {
       return;
     }
 
+    if (!form.email.trim() && !form.telefone.trim()) {
+      setFormErro('Informe pelo menos email ou telefone para envio dos documentos da venda.');
+      return;
+    }
+
     setSaving(true);
     try {
       if (editando && form.id) {

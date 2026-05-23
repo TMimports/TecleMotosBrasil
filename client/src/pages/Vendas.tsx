@@ -1266,6 +1266,10 @@ export function Vendas() {
     if (!quickCliente.cpfCnpj.trim()) { setQuickClienteErro('CPF/CNPJ é obrigatório.'); return; }
     const doc = quickCliente.cpfCnpj.replace(/\D/g, '');
     if (doc.length !== 11 && doc.length !== 14) { setQuickClienteErro('CPF deve ter 11 dígitos ou CNPJ 14 dígitos.'); return; }
+    if (!quickCliente.email.trim() && !quickCliente.telefone.trim()) {
+      setQuickClienteErro('Informe pelo menos email ou telefone para envio dos documentos da venda.');
+      return;
+    }
 
     setQuickClienteLoading(true);
     try {

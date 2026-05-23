@@ -119,7 +119,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
   const [seriesFinais, setSeriesFinais] = useState<{ checkin: string; recibo: string } | null>(null);
 
   const [checklist, setChecklist] = useState<ChecklistItemState[]>(CHECKLIST_INICIAL);
-  const [quilometragem, setQuilometragem] = useState('');
   const [nomeEntregador, setNomeEntregador] = useState('');
 
   const sigClienteRef    = useRef<SignatureCanvas>(null);
@@ -142,9 +141,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
               return s ? { ...item, status: s.status, obs: s.obs } : item;
             }));
           } catch (_) { /* checklist corrompido: ignora */ }
-        }
-        if (data.checkin?.quilometragem) {
-          setQuilometragem(String(data.checkin.quilometragem));
         }
         if (data.checkin?.nomeEntregador) {
           setNomeEntregador(data.checkin.nomeEntregador);
@@ -176,7 +172,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
 
       await api.post(`/checkin/${vendaId}`, {
         checklistJson: JSON.stringify(checklist),
-        quilometragem: quilometragem ? Number(quilometragem) : undefined,
         assinaturaCliente,
         assinaturaVendedor,
         assinaturaEntregador,
@@ -205,12 +200,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
       return;
     }
 
-    // Validação: quilometragem
-    if (!quilometragem || Number(quilometragem) < 0) {
-      setErro('Quilometragem é obrigatória');
-      return;
-    }
-
     // Validação: assinaturas
     if (sigClienteRef.current?.isEmpty()) {
       setErro('Assinatura do cliente é obrigatória');
@@ -233,7 +222,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
         `/checkin/${vendaId}/finalizar`,
         {
           checklistJson: JSON.stringify(checklist),
-          quilometragem: Number(quilometragem),
           assinaturaCliente,
           assinaturaVendedor,
           assinaturaEntregador,
@@ -349,7 +337,6 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
     <p><span class="lbl">Data:</span> <span class="val">${new Date(venda.createdAt).toLocaleDateString('pt-BR')}</span></p>
     <p><span class="lbl">Loja:</span> <span class="val">${venda.loja?.nomeFantasia || '-'}</span></p>
     <p><span class="lbl">Vendedor:</span> <span class="val">${venda.vendedor?.nome || '-'}</span></p>
-    <p><span class="lbl">Quilometragem:</span> <span class="val">${quilometragem || '-'} km</span></p>
   </div>
   <div class="info-col">
     <div class="sec-title">Dados do Cliente</div>
@@ -522,24 +509,6 @@ ${motosHtml ? `<div style="margin-bottom:18px">
             ))}
           </div>
         )}
-
-        {/* Quilometragem */}
-        <div className="bg-[#18181b] border border-[#27272a] rounded-xl p-4">
-          <label className="text-[10px] font-bold tracking-widest text-orange-500 uppercase block mb-2">
-            Quilometragem <span className="text-red-400">*</span>
-          </label>
-          <div className="flex items-center bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 gap-2">
-            <input
-              type="number"
-              min="0"
-              value={quilometragem}
-              onChange={e => setQuilometragem(e.target.value)}
-              placeholder="0"
-              className="flex-1 bg-transparent text-white text-lg font-bold outline-none border-none"
-            />
-            <span className="text-zinc-500 text-sm">km</span>
-          </div>
-        </div>
 
         {/* Checklist técnico */}
         <div className="bg-[#18181b] border border-[#27272a] rounded-xl p-4 space-y-3">

@@ -16,6 +16,12 @@ const upload = multer({
   }
 });
 
+// Sanitiza dados lidos pelo xlsx para interromper Prototype Pollution (GHSA-4r6h-8v6p-xvw6)
+// JSON.parse(JSON.stringify) cria objetos limpos sem herança de protótipo contaminado
+function sanitizarPlanilha(dados: any[][]): any[][] {
+  return JSON.parse(JSON.stringify(dados));
+}
+
 // ── Utilitários ───────────────────────────────────────────────────────────────
 
 function parseBR(val: any): number {
@@ -125,7 +131,7 @@ router.post('/produtos', verifyToken, upload.single('arquivo'), async (req, res)
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
+    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
 
     if (dados.length < 2) return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 
@@ -242,7 +248,7 @@ router.post('/servicos', verifyToken, upload.single('arquivo'), async (req, res)
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
+    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
 
     const headerRaw: string[] = (dados[0] as any[]).map(h => String(h ?? '').toLowerCase().trim());
     const iNome   = colIdx(headerRaw, ['nome', 'servico', 'serviço', 'descricao', 'descrição']);
@@ -296,7 +302,7 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
+    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
 
     const headerRaw: string[] = (dados[0] as any[]).map(h => String(h ?? '').toLowerCase().trim());
     const iProduto = colIdx(headerRaw, ['modelo', 'produto', 'nome', 'name']);
@@ -409,7 +415,7 @@ router.post('/estoque', verifyToken, upload.single('arquivo'), async (req: any, 
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][];
+    const rows = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
 
     if (rows.length < 2) return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 

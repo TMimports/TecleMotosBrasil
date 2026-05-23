@@ -10,6 +10,18 @@ import { registrarLog, obterIp } from '../services/logService.js';
 const router = Router();
 router.use(verifyToken);
 
+// Roles globais que podem acessar qualquer loja/grupo
+const ROLES_GLOBAIS = new Set(['SUPER_ADMIN', 'ADMIN_GERAL', 'ADMIN_REDE', 'ADMIN_FINANCEIRO', 'ADMIN_COMERCIAL']);
+
+// Verifica se o usuário autenticado tem acesso à venda pelo grupo da loja
+function verificarAcessoVenda(req: AuthRequest, vendaLojaGrupoId: number | null | undefined): boolean {
+  const role = req.user?.role as string;
+  if (ROLES_GLOBAIS.has(role)) return true;
+  const userGrupoId = req.user?.grupoId;
+  if (!userGrupoId || !vendaLojaGrupoId) return false;
+  return vendaLojaGrupoId === userGrupoId;
+}
+
 function gerarSerie(prefixo: string, vendaId: number): string {
   const ano = new Date().getFullYear();
   return `${prefixo}-${ano}-${vendaId.toString().padStart(6, '0')}`;
@@ -80,6 +92,9 @@ router.get('/:vendaId', async (req: AuthRequest, res) => {
     });
 
     if (!venda) return res.status(404).json({ error: 'Venda não encontrada' });
+    if (!verificarAcessoVenda(req, venda.loja?.grupoId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
     if (venda.tipo !== 'VENDA') return res.status(400).json({ error: 'Orçamentos não têm check-in' });
 
     res.json(venda);
@@ -95,6 +110,16 @@ router.post('/:vendaId', async (req: AuthRequest, res) => {
     const vendaId = Number(req.params.vendaId);
     const { checklistJson, quilometragem, assinaturaCliente, assinaturaVendedor,
             assinaturaEntregador, nomeCliente, nomeVendedor, nomeEntregador } = req.body;
+
+    // Verificar acesso antes de qualquer operação
+    const vendaParaCheck = await prisma.venda.findUnique({
+      where: { id: vendaId },
+      include: { loja: { select: { grupoId: true } } }
+    });
+    if (!vendaParaCheck) return res.status(404).json({ error: 'Venda não encontrada' });
+    if (!verificarAcessoVenda(req, vendaParaCheck.loja?.grupoId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
 
     const existing = await prisma.vendaCheckin.findUnique({ where: { vendaId } });
     const now = new Date();
@@ -133,9 +158,6 @@ router.put('/:vendaId/finalizar', async (req: AuthRequest, res) => {
             assinadoClienteAt, assinadoVendedorAt } = req.body;
 
     // ── Validações ────────────────────────────────────────────────────────────
-    if (!quilometragem || Number(quilometragem) < 0) {
-      return res.status(400).json({ error: 'Quilometragem é obrigatória' });
-    }
     if (!assinaturaCliente || assinaturaCliente.length < 10) {
       return res.status(400).json({ error: 'Assinatura do cliente é obrigatória' });
     }
@@ -167,6 +189,9 @@ router.put('/:vendaId/finalizar', async (req: AuthRequest, res) => {
     });
 
     if (!venda) return res.status(404).json({ error: 'Venda não encontrada' });
+    if (!verificarAcessoVenda(req, venda.loja?.grupoId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
 
     if ((venda as any).status !== 'PENDENTE_CHECKIN') {
       return res.status(400).json({ error: 'Esta venda já foi finalizada ou não está em check-in' });
@@ -364,6 +389,9 @@ router.get('/:vendaId/laudo', async (req: AuthRequest, res) => {
       }
     });
     if (!venda) return res.status(404).json({ error: 'Venda não encontrada' });
+    if (!verificarAcessoVenda(req, venda.loja?.grupoId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
     res.json(venda);
   } catch (err) {
     res.status(500).json({ error: 'Erro interno' });
@@ -383,8 +411,12 @@ router.post('/:vendaId/reenviar', async (req: AuthRequest, res) => {
       }
     });
 
-    if (!venda || (venda as any).status !== 'FINALIZADA') {
-      return res.status(400).json({ error: 'Venda não finalizada ou não encontrada' });
+    if (!venda) return res.status(404).json({ error: 'Venda não encontrada' });
+    if (!verificarAcessoVenda(req, venda.loja?.grupoId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    if ((venda as any).status !== 'FINALIZADA') {
+      return res.status(400).json({ error: 'Venda não finalizada' });
     }
 
     const resultados: { email?: boolean; whatsapp?: boolean; erros: string[] } = { erros: [] };
