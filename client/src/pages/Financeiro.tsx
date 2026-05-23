@@ -82,7 +82,7 @@ const initialForm = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt(val: number) {
-  return val.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+  return val.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function fmtDate(dt: string) {

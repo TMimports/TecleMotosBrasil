@@ -94,6 +94,8 @@ model User {
   loja                      Loja?              @relation(fields: [lojaId], references: [id])
   vendas                    Venda[]            @relation("VendaVendedor")
   leadsVendedor             Lead[]             @relation("LeadVendedor")
+  integracoesBancariasCriadas IntegracaoBancaria[] @relation("IntegracaoBancariaCreatedBy")
+  cobrancasPicPayCriadas    CobrancaPicPay[]   @relation("CobrancaPicPayCreatedBy")
   leadsRepassados           Lead[]             @relation("LeadRepassadoPor")
   interacoesLead            LeadInteracao[]
 }
@@ -261,6 +263,7 @@ model Venda {
   cliente              Cliente          @relation(fields: [clienteId], references: [id])
   loja                 Loja             @relation(fields: [lojaId], references: [id])
   vendedor             User             @relation("VendaVendedor", fields: [vendedorId], references: [id])
+  cobrancasPicPay      CobrancaPicPay[] @relation("CobrancaVenda")
 }
 
 model ItemVenda {
@@ -460,6 +463,7 @@ model ContaReceber {
   loja           Loja                  @relation(fields: [lojaId], references: [id])
   parcelas       ParcelaContaReceber[]
   recebimentos   Recebimento[]
+  cobrancasPicPay CobrancaPicPay[]
 }
 
 model Configuracao {
@@ -778,6 +782,7 @@ model ContaBancaria {
   updatedAt    DateTime             @updatedAt
   loja         Loja                 @relation(fields: [lojaId], references: [id])
   lancamentos  LancamentoBancario[]
+  integracao   IntegracaoBancaria?
 }
 
 model LancamentoBancario {
@@ -1150,4 +1155,130 @@ enum TipoDisparo {
   MANUAL
   AUTOMATICO
   CRON
+}
+
+// ── Integração bancária (PicPay, futuros: Open Finance, CNAB) ──────────────────
+// Mantém credenciais criptografadas e estado da integração por conta bancária.
+// Os tokens NUNCA são gravados em texto puro: usar AES-256-GCM com chave de
+// ambiente INTEGRACAO_ENCRYPT_KEY (ver helper em server/src/utils/cripto.ts).
+
+model IntegracaoBancaria {
+  id                  Int                       @id @default(autoincrement())
+  contaBancariaId     Int                       @unique
+  provedor            ProvedorIntegracao
+  ambiente            AmbienteIntegracao        @default(SANDBOX)
+  status              StatusIntegracaoBancaria  @default(PENDENTE)
+
+  // Credenciais (criptografadas em AES-256-GCM antes de gravar)
+  apiTokenCriptografado    String?
+  apiSecretCriptografado   String?
+  webhookSecretCriptografado String?
+  sellerIdCriptografado    String?
+  chavePixRecebimento      String?
+
+  // Tokens de sessão (OAuth quando aplicável)
+  accessTokenCriptografado  String?
+  refreshTokenCriptografado String?
+  tokenExpiresAt            DateTime?
+
+  // Operação
+  baseUrl              String?
+  ipWhitelist          String?
+  ultimaSincronizacao  DateTime?
+  proximaSincronizacao DateTime?
+  ultimoErro           String?
+  ativa                Boolean                   @default(false)
+
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  createdById          Int?
+
+  contaBancaria        ContaBancaria             @relation(fields: [contaBancariaId], references: [id], onDelete: Cascade)
+  createdBy            User?                     @relation("IntegracaoBancariaCreatedBy", fields: [createdById], references: [id])
+  cobrancas            CobrancaPicPay[]
+  webhookLogs          WebhookBancarioLog[]
+}
+
+// Audita TODA chamada de webhook recebida do banco (incluindo as inválidas).
+// Permite forense em caso de fraude, replay attack ou erro de processamento.
+model WebhookBancarioLog {
+  id                 Int                  @id @default(autoincrement())
+  integracaoId       Int
+  recebidoEm         DateTime             @default(now())
+  ipOrigem           String?
+  assinaturaHeader   String?
+  assinaturaValida   Boolean              @default(false)
+  payloadJson        String               @db.Text
+  evento             String?
+  referenceId        String?
+  processado         Boolean              @default(false)
+  processadoEm       DateTime?
+  erro               String?
+
+  integracao         IntegracaoBancaria   @relation(fields: [integracaoId], references: [id], onDelete: Cascade)
+
+  @@index([integracaoId, recebidoEm])
+  @@index([referenceId])
+}
+
+// Cobranças PIX/PicPay geradas pelo ERP — vinculadas a Recebimento e Venda.
+// referenceId é UUID único enviado ao PicPay (idempotência).
+model CobrancaPicPay {
+  id                 Int                  @id @default(autoincrement())
+  integracaoId       Int
+  referenceId        String               @unique
+  vendaId            Int?
+  contaReceberId     Int?
+  valor              Decimal              @db.Decimal(10, 2)
+  expiresAt          DateTime?
+  status             StatusCobrancaPicPay @default(PENDENTE)
+  qrCodeUrl          String?
+  qrCodePayload      String?              @db.Text
+  paymentUrl         String?
+  pagoEm             DateTime?
+  cancelladoEm       DateTime?
+  authorizationId    String?
+  observacoes        String?
+
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  createdById        Int?
+
+  integracao         IntegracaoBancaria   @relation(fields: [integracaoId], references: [id], onDelete: Cascade)
+  venda              Venda?               @relation("CobrancaVenda", fields: [vendaId], references: [id])
+  contaReceber       ContaReceber?        @relation(fields: [contaReceberId], references: [id])
+  createdBy          User?                @relation("CobrancaPicPayCreatedBy", fields: [createdById], references: [id])
+
+  @@index([status])
+  @@index([vendaId])
+}
+
+enum ProvedorIntegracao {
+  PICPAY
+  OPEN_FINANCE
+  CNAB
+  WEBHOOK_GENERICO
+}
+
+enum AmbienteIntegracao {
+  SANDBOX
+  PRODUCAO
+}
+
+enum StatusIntegracaoBancaria {
+  PENDENTE
+  ATIVA
+  EXPIRADA
+  ERRO
+  DESATIVADA
+}
+
+enum StatusCobrancaPicPay {
+  PENDENTE
+  CRIADA
+  PAGA
+  EXPIRADA
+  CANCELADA
+  ESTORNADA
+  ERRO
 }

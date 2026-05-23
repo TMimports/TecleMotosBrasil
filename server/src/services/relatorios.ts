@@ -181,9 +181,9 @@ function gerarAlertas(dados: any, tipo: TipoRelatorio): string[] {
 
   if (tipo === 'FINANCEIRO' || tipo === 'GERAL') {
     const fin = dados.financeiro;
-    if (fin.aReceberVencido > 0) alertas.push(`⚠️ R$ ${fin.aReceberVencido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas a receber VENCIDAS`);
-    if (fin.aPagarVencido > 0) alertas.push(`🔴 R$ ${fin.aPagarVencido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em contas a pagar VENCIDAS`);
-    if (fin.saldoLiquido < 0) alertas.push(`🔴 Fluxo de caixa NEGATIVO no período: R$ ${Math.abs(fin.saldoLiquido).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
+    if (fin.aReceberVencido > 0) alertas.push(`⚠️ R$ ${fin.aReceberVencido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} em contas a receber VENCIDAS`);
+    if (fin.aPagarVencido > 0) alertas.push(`🔴 R$ ${fin.aPagarVencido.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} em contas a pagar VENCIDAS`);
+    if (fin.saldoLiquido < 0) alertas.push(`🔴 Fluxo de caixa NEGATIVO no período: R$ ${Math.abs(fin.saldoLiquido).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   }
 
   if (tipo === 'COMERCIAL' || tipo === 'GERAL') {

@@ -22,6 +22,23 @@ interface VendaItem {
   servico?: { nome: string };
 }
 
+interface VendaCheckinFull {
+  id: number;
+  vendaId: number;
+  numeroSerie: string;
+  checklistJson?: string | null;
+  quilometragem?: number | null;
+  assinaturaCliente?: string | null;
+  assinaturaVendedor?: string | null;
+  assinaturaEntregador?: string | null;
+  nomeCliente?: string | null;
+  nomeVendedor?: string | null;
+  nomeEntregador?: string | null;
+  assinadoClienteAt?: string | null;
+  assinadoVendedorAt?: string | null;
+  finalizadoAt?: string | null;
+}
+
 interface VendaFull {
   id: number;
   tipo: string;
@@ -38,6 +55,7 @@ interface VendaFull {
   loja: { id: number; nomeFantasia: string; cnpj?: string; telefone?: string; endereco?: string };
   itens: VendaItem[];
   createdAt: string;
+  checkin?: VendaCheckinFull | null;
 }
 
 interface Venda {
@@ -707,11 +725,12 @@ export function Vendas() {
     // ── Valores ─────────────────────────────────────────────────────────────
     const valorBrutoNum  = Number(vendaDetalhada?.valorBruto || 0);
     const valorTotalNum  = Number(vendaDetalhada?.valorTotal || 0);
-    // Soma dos itens após desconto (sem encargos da máquina)
-    const somaItens = (vendaDetalhada?.itens || []).reduce((acc: number, it: any) => {
+    // Soma dos itens após desconto (sem encargos da máquina) — arredondado a centavos
+    const somaItens = roundMoney((vendaDetalhada?.itens || []).reduce((acc: number, it: any) => {
       const desc = Number(it.desconto || 0);
-      return acc + Number(it.precoUnitario) * it.quantidade * (1 - desc / 100);
-    }, 0);
+      const bruto = roundMoney(Number(it.precoUnitario) * it.quantidade);
+      return acc + roundMoney(bruto * (1 - desc / 100));
+    }, 0));
     const encargosNum = valorTotalNum > somaItens + 0.01 ? valorTotalNum - somaItens : 0;
     const descontoNum = somaItens > valorTotalNum ? somaItens - valorTotalNum : 0;
 
@@ -911,8 +930,8 @@ export function Vendas() {
               <tbody>
                 ${(vendaDetalhada?.itens || []).map((item: any) => {
                   const desc  = Number(item.desconto || 0);
-                  const bruto = Number(item.precoUnitario) * item.quantidade;
-                  const final = bruto * (1 - desc / 100);
+                  const bruto = roundMoney(Number(item.precoUnitario) * item.quantidade);
+                  const final = roundMoney(bruto * (1 - desc / 100));
                   const nome  = item.produto?.nome || item.servico?.nome || '-';
                   const uf = item.unidadeFisica;
                   const detalhesUnidade = uf ? `<div style="font-size:10px;color:#888;margin-top:3px;font-family:monospace">` +
@@ -990,7 +1009,9 @@ export function Vendas() {
     printWindow.print();
   };
 
-  // VERSÃO PROVISÓRIA — sem persistência em banco (Fase 5 do plano de integração Check-in)
+  // Renderiza o laudo. Se a venda tem checkin assinado, usa os dados reais
+  // (checklist marcado + imagens das assinaturas + datas/horas). Caso contrário,
+  // cai no modo provisório (impressão manual).
   const handleLaudoSaida = (venda: VendaFull) => {
     const nomeFantasia = (venda.loja?.nomeFantasia || '').toLowerCase();
     const isTMImports = venda.loja?.id === 4
@@ -999,11 +1020,81 @@ export function Vendas() {
     const logoUrl   = `${window.location.origin}/${isTMImports ? 'logo-tm.png' : 'logo.png'}`;
     const brandName = isTMImports ? 'TM Imports' : 'Tecle Motos';
 
-    const numeroSerie = `LDS-${venda.id.toString().padStart(6, '0')}`;
+    const checkin = venda.checkin || null;
+    const assinado = !!(checkin && checkin.assinaturaCliente && checkin.assinaturaVendedor && checkin.finalizadoAt);
+    const numeroSerie = checkin?.numeroSerie || `LDS-${venda.id.toString().padStart(6, '0')}`;
     const dataVenda   = venda.createdAt
       ? new Date(venda.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
       : '-';
     const dataHoraGeracao = new Date().toLocaleString('pt-BR');
+
+    // Formata data/hora de assinatura individual
+    const fmtAssDateTime = (iso?: string | null): string => {
+      if (!iso) return '_____ / _____ / _________ &nbsp; ____:____';
+      const d = new Date(iso);
+      const dia  = String(d.getDate()).padStart(2, '0');
+      const mes  = String(d.getMonth() + 1).padStart(2, '0');
+      const ano  = d.getFullYear();
+      const hh   = String(d.getHours()).padStart(2, '0');
+      const mm   = String(d.getMinutes()).padStart(2, '0');
+      return `${dia} / ${mes} / ${ano} &nbsp; ${hh}:${mm}`;
+    };
+
+    // Checklist marcado vindo do banco (checklistJson)
+    type ChkItem = { label: string; status?: string; obs?: string };
+    let checklistItems: ChkItem[] = [];
+    if (checkin?.checklistJson) {
+      try { checklistItems = JSON.parse(checkin.checklistJson); } catch { checklistItems = []; }
+    }
+    const checklistDefault: ChkItem[] = [
+      { label: 'Manual de uso entregue' },
+      { label: 'Carregador entregue' },
+      { label: 'Chaves entregues' },
+      { label: 'Recibo de venda entregue' },
+      { label: 'Orientação de uso realizada' },
+      { label: 'Orientação de carregamento realizada' },
+      { label: 'Orientação de garantia realizada' },
+      { label: 'Estado visual da moto conferido' },
+      { label: 'Chassi conferido' },
+      { label: 'Motor conferido' },
+      { label: 'Cliente ciente das condições de garantia' },
+    ];
+    const itemsToRender: ChkItem[] = checklistItems.length > 0 ? checklistItems : checklistDefault;
+    const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const checklistHtml = itemsToRender.map(it => {
+      const ok    = it.status === 'OK';
+      const naoOk = it.status === 'NAO_OK';
+      const boxBg = ok ? 'background:#16a34a;border-color:#16a34a;color:#fff;'
+                   : naoOk ? 'background:#dc2626;border-color:#dc2626;color:#fff;'
+                   : '';
+      const mark  = ok ? '✓' : naoOk ? '✗' : '';
+      const obs   = naoOk && it.obs ? `<div style="font-size:10px;color:#b91c1c;margin-top:2px;">Obs: ${escapeHtml(it.obs)}</div>` : '';
+      return `<div class="check-item">
+        <div class="check-box" style="${boxBg}display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;">${mark}</div>
+        <div class="check-label">${escapeHtml(it.label)}${obs}</div>
+      </div>`;
+    }).join('');
+
+    // Observação geral do laudo (do form ou da venda)
+    const obsTexto = venda.observacoes && venda.observacoes.trim()
+      ? escapeHtml(venda.observacoes)
+      : '__________________________________________________________________________________________________________';
+
+    // Assinaturas: usa as imagens base64 quando assinado
+    const assinaturaClienteHtml = checkin?.assinaturaCliente
+      ? `<img src="${checkin.assinaturaCliente}" alt="Assinatura do cliente" style="max-height:56px;max-width:100%;display:block;margin:0 auto;" />`
+      : `<div class="assin-line"></div>`;
+    const assinaturaVendedorHtml = checkin?.assinaturaVendedor
+      ? `<img src="${checkin.assinaturaVendedor}" alt="Assinatura do vendedor" style="max-height:56px;max-width:100%;display:block;margin:0 auto;" />`
+      : `<div class="assin-line"></div>`;
+    const temEntregador = !!(checkin?.assinaturaEntregador && checkin.nomeEntregador);
+    const assinaturaEntregadorHtml = temEntregador
+      ? `<img src="${checkin!.assinaturaEntregador}" alt="Assinatura do entregador" style="max-height:56px;max-width:100%;display:block;margin:0 auto;" />`
+      : '';
+
+    const nomeClienteLaudo   = checkin?.nomeCliente   || venda.cliente?.nome   || '';
+    const nomeVendedorLaudo  = checkin?.nomeVendedor  || venda.vendedor?.nome  || '';
+    const nomeEntregadorLaudo = checkin?.nomeEntregador || '';
 
     // Monta dados das motos vendidas
     const motosHtml = (venda.itens || [])
@@ -1142,9 +1233,14 @@ export function Vendas() {
 
   <div class="body">
 
-    <div class="provisorio-aviso">
-      ⚠ Versão provisória — documento para impressão manual. Assinatura digital e persistência serão implementadas em fase futura.
-    </div>
+    ${assinado
+      ? `<div style="background:#dcfce7;border:1px solid #16a34a;border-radius:6px;padding:8px 12px;font-size:11px;color:#14532d;margin-bottom:14px;">
+           ✓ Documento assinado digitalmente em ${escapeHtml(new Date(checkin!.finalizadoAt!).toLocaleString('pt-BR'))} — Laudo ${escapeHtml(numeroSerie)}
+         </div>`
+      : `<div class="provisorio-aviso">
+           ⚠ Versão provisória — documento para impressão manual. Esta venda ainda não foi finalizada pelo check-in digital.
+         </div>`
+    }
 
     <!-- Dados da venda + cliente -->
     <div class="info-grid">
@@ -1189,37 +1285,34 @@ export function Vendas() {
     <div class="section">
       <div class="section-title">Checklist de Entrega</div>
       <div class="checklist">
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Manual de uso entregue</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Carregador entregue</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Chaves entregues</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Recibo de venda entregue</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de uso realizada</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de carregamento realizada</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de garantia realizada</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Estado visual da moto conferido</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Chassi conferido</div></div>
-        <div class="check-item"><div class="check-box"></div><div class="check-label">Motor conferido</div></div>
-        <div class="check-item" style="grid-column:1/-1"><div class="check-box"></div><div class="check-label">Cliente ciente das condições de garantia</div></div>
+        ${checklistHtml}
       </div>
-      <div class="obs-area">Observações: __________________________________________________________________________________________________________</div>
+      <div class="obs-area">Observações: ${obsTexto}</div>
     </div>
 
     <!-- Assinaturas -->
     <div class="section">
       <div class="section-title">Assinaturas</div>
-      <div class="assin-grid">
+      <div class="assin-grid" style="${temEntregador ? 'grid-template-columns:1fr 1fr 1fr;' : ''}">
         <div class="assin-box">
-          <div class="assin-line"></div>
-          <div class="assin-label">Assinatura do Cliente</div>
-          <div class="assin-nome">${venda.cliente?.nome || ''}</div>
-          <div class="assin-data">Data / Hora: _____ / _____ / _________ &nbsp; ____:____</div>
+          ${assinaturaClienteHtml}
+          <div class="assin-label" style="border-top:1px solid #333;padding-top:4px;">Assinatura do Cliente</div>
+          <div class="assin-nome">${escapeHtml(nomeClienteLaudo)}</div>
+          <div class="assin-data">Data / Hora: ${fmtAssDateTime(checkin?.assinadoClienteAt)}</div>
         </div>
         <div class="assin-box">
-          <div class="assin-line"></div>
-          <div class="assin-label">Assinatura do Vendedor</div>
-          <div class="assin-nome">${venda.vendedor?.nome || ''}</div>
-          <div class="assin-data">Data / Hora: _____ / _____ / _________ &nbsp; ____:____</div>
+          ${assinaturaVendedorHtml}
+          <div class="assin-label" style="border-top:1px solid #333;padding-top:4px;">Assinatura do Vendedor</div>
+          <div class="assin-nome">${escapeHtml(nomeVendedorLaudo)}</div>
+          <div class="assin-data">Data / Hora: ${fmtAssDateTime(checkin?.assinadoVendedorAt)}</div>
         </div>
+        ${temEntregador ? `
+        <div class="assin-box">
+          ${assinaturaEntregadorHtml}
+          <div class="assin-label" style="border-top:1px solid #333;padding-top:4px;">Assinatura do Entregador</div>
+          <div class="assin-nome">${escapeHtml(nomeEntregadorLaudo)}</div>
+          <div class="assin-data">Data / Hora: ${fmtAssDateTime(checkin?.finalizadoAt)}</div>
+        </div>` : ''}
       </div>
     </div>
 
@@ -1238,7 +1331,16 @@ export function Vendas() {
 
   const abrirLaudoSaida = async (id: number) => {
     try {
-      const venda = await api.get<VendaFull>(`/vendas/${id}`);
+      // Endpoint do check-in já retorna a venda completa com o registro de checkin
+      // (assinaturas em base64, checklistJson, datas de assinatura, etc).
+      // Se a venda ainda não tem check-in finalizado, o objeto venda.checkin vem null
+      // e o laudo cai automaticamente no modo "provisório".
+      let venda: VendaFull;
+      try {
+        venda = await api.get<VendaFull>(`/checkin/${id}`);
+      } catch {
+        venda = await api.get<VendaFull>(`/vendas/${id}`);
+      }
       handleLaudoSaida(venda);
     } catch (err) {
       console.error('Erro ao carregar venda para laudo:', err);
@@ -2248,11 +2350,12 @@ export function Vendas() {
               const logo = isTM ? '/logo-tm.png' : '/logo.png';
               const brand = isTM ? 'TM Imports' : 'Tecle Motos';
 
-              // Cálculos de valor
-              const somaIt = (vendaDetalhada?.itens || []).reduce((acc: number, it: any) => {
+              // Cálculos de valor — arredondado a centavos
+              const somaIt = roundMoney((vendaDetalhada?.itens || []).reduce((acc: number, it: any) => {
                 const d = Number(it.desconto || 0);
-                return acc + Number(it.precoUnitario) * it.quantidade * (1 - d / 100);
-              }, 0);
+                const bruto = roundMoney(Number(it.precoUnitario) * it.quantidade);
+                return acc + roundMoney(bruto * (1 - d / 100));
+              }, 0));
               const vTotal = Number(vendaDetalhada?.valorTotal || 0);
               const encargos = vTotal > somaIt + 0.01 ? vTotal - somaIt : 0;
               const desconto  = somaIt > vTotal + 0.01  ? somaIt - vTotal  : 0;
@@ -2337,8 +2440,8 @@ export function Vendas() {
                       <tbody>
                         {vendaDetalhada?.itens?.map((item, i) => {
                           const desc = Number(item.desconto || 0);
-                          const bruto = Number(item.precoUnitario) * item.quantidade;
-                          const final = bruto * (1 - desc / 100);
+                          const bruto = roundMoney(Number(item.precoUnitario) * item.quantidade);
+                          const final = roundMoney(bruto * (1 - desc / 100));
                           const uf = item.unidadeFisica;
                           return (
                             <tr key={i} className="border-b border-zinc-800">

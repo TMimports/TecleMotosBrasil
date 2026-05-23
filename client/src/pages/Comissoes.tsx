@@ -120,19 +120,19 @@ export function Comissoes() {
         <div className="card">
           <p className="text-gray-400 text-sm">Total Geral</p>
           <p className="text-2xl font-bold text-orange-400">
-            R$ {totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            R$ {totalGeral.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm">Total Pendente</p>
           <p className="text-2xl font-bold text-yellow-400">
-            R$ {totalPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            R$ {totalPendente.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
         <div className="card">
           <p className="text-gray-400 text-sm">Total Pago</p>
           <p className="text-2xl font-bold text-green-400">
-            R$ {totalPago.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            R$ {totalPago.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
         <div className="card">
@@ -241,7 +241,7 @@ export function Comissoes() {
                 <div className="col-span-2 sm:col-span-1">
                   <p className="text-gray-500 text-xs">Valor</p>
                   <p className="text-xl font-bold text-green-400">
-                    R$ {Number(com.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    R$ {Number(com.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>

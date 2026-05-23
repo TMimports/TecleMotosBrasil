@@ -212,7 +212,7 @@ export function Ranking() {
                     <td className="p-3 border-b border-zinc-700 font-semibold">{item.quantidadeVendida}</td>
                     <td className="p-3 border-b border-zinc-700">{item.totalVendas}</td>
                     <td className="p-3 border-b border-zinc-700 font-semibold text-green-400">
-                      R$ {Number(item.faturamento).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {Number(item.faturamento).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))
@@ -270,7 +270,7 @@ export function Ranking() {
                     <td className="p-3 border-b border-zinc-700 font-semibold">{item.quantidadeExecutada}</td>
                     <td className="p-3 border-b border-zinc-700">{item.totalOS}</td>
                     <td className="p-3 border-b border-zinc-700 font-semibold text-green-400">
-                      R$ {Number(item.faturamento).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {Number(item.faturamento).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))

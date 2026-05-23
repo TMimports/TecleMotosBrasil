@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import ExcelJS from 'exceljs';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../services/api';
 
@@ -439,6 +440,473 @@ function ModalConciliar({ lancamento, onConciliar, onClose }: {
 
 // ── Página Principal ──────────────────────────────────────────────────────────
 
+// ── Modal: Importar Planilha (Excel/CSV) ─────────────────────────────────────
+// Lê o arquivo no browser (exceljs ou parser CSV), mostra preview com mapeamento
+// de colunas e envia para o backend. Suporta múltiplos formatos de planilha bancária.
+
+interface LinhaPlanilha { data: string; descricao: string; valor: number; tipo: 'CREDITO' | 'DEBITO' }
+
+function ModalPlanilha({ contas, contaPreSelecionada, onImport, onClose }: {
+  contas: ContaBancaria[];
+  contaPreSelecionada?: number;
+  onImport: (contaId: number, linhas: LinhaPlanilha[]) => Promise<{ importados: number; duplicados: number; invalidos: number; total: number }>;
+  onClose: () => void;
+}) {
+  const [contaId, setContaId] = useState(contaPreSelecionada ?? contas[0]?.id ?? 0);
+  const [fileName, setFileName] = useState('');
+  const [linhas, setLinhas] = useState<LinhaPlanilha[]>([]);
+  const [erroParse, setErroParse] = useState('');
+  const [result, setResult] = useState<{ importados: number; duplicados: number; invalidos: number; total: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Detecta data em vários formatos (DD/MM/YYYY, YYYY-MM-DD, Excel serial number)
+  const parseData = (v: any): string | null => {
+    if (!v) return null;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const s = String(v).trim();
+    const brMatch = s.match(/^(\d{2})[/\-.](\d{2})[/\-.](\d{4})/);
+    if (brMatch) return `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`;
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return s.slice(0, 10);
+    // Excel serial date (dias desde 1900-01-01)
+    const num = Number(s);
+    if (!isNaN(num) && num > 25569 && num < 60000) {
+      const d = new Date((num - 25569) * 86400 * 1000);
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
+  };
+
+  // Detecta valor BR (R$ 1.234,56) ou US (1234.56)
+  const parseValor = (v: any): number | null => {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'number') return v;
+    const limpo = String(v).replace(/R\$/gi, '').replace(/\s/g, '').trim();
+    if (!limpo) return null;
+    let num: number;
+    if (limpo.includes(',') && limpo.includes('.')) {
+      // 1.234,56 → 1234.56
+      num = Number(limpo.replace(/\./g, '').replace(',', '.'));
+    } else if (limpo.includes(',')) {
+      num = Number(limpo.replace(',', '.'));
+    } else {
+      num = Number(limpo);
+    }
+    return isNaN(num) ? null : num;
+  };
+
+  async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setErroParse('');
+    setLinhas([]);
+    setResult(null);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const parsedLines: LinhaPlanilha[] = [];
+
+      if (file.name.toLowerCase().endsWith('.csv')) {
+        // CSV: linha 1 = cabeçalho
+        const text = new TextDecoder('utf-8').decode(buffer);
+        const linhas = text.split(/\r?\n/).filter(l => l.trim());
+        if (linhas.length < 2) {
+          setErroParse('CSV vazio ou sem linhas de dados');
+          return;
+        }
+        const sep = linhas[0].includes(';') ? ';' : ',';
+        const headers = linhas[0].split(sep).map(h => h.trim().toLowerCase());
+        const idxData      = headers.findIndex(h => /data|dt/i.test(h));
+        const idxDescricao = headers.findIndex(h => /descric|hist|memo/i.test(h));
+        const idxValor     = headers.findIndex(h => /valor|amount|montante/i.test(h));
+        const idxTipo      = headers.findIndex(h => /tipo|type|debit|credit/i.test(h));
+        if (idxData < 0 || idxDescricao < 0 || idxValor < 0) {
+          setErroParse('CSV precisa ter colunas: data, descrição, valor');
+          return;
+        }
+        for (let i = 1; i < linhas.length; i++) {
+          const cols = linhas[i].split(sep);
+          const data = parseData(cols[idxData]);
+          const valor = parseValor(cols[idxValor]);
+          if (!data || valor === null) continue;
+          const tipoTxt = idxTipo >= 0 ? cols[idxTipo].toLowerCase() : '';
+          const tipo: 'CREDITO' | 'DEBITO' = (
+            valor < 0 || tipoTxt.includes('deb') || tipoTxt.includes('saida') || tipoTxt === 'd'
+          ) ? 'DEBITO' : 'CREDITO';
+          parsedLines.push({
+            data, descricao: (cols[idxDescricao] || '').trim().slice(0, 255),
+            valor: Math.abs(valor), tipo,
+          });
+        }
+      } else {
+        // XLSX
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+        const sheet = workbook.worksheets[0];
+        if (!sheet) {
+          setErroParse('Planilha sem abas');
+          return;
+        }
+        // Achar linha de cabeçalho (primeira linha não vazia com texto)
+        let headerRowIdx = 1;
+        let headers: string[] = [];
+        for (let r = 1; r <= Math.min(10, sheet.rowCount); r++) {
+          const row = sheet.getRow(r);
+          const cells: string[] = [];
+          row.eachCell((cell, col) => { cells[col - 1] = String(cell.value || '').toLowerCase().trim(); });
+          if (cells.some(c => /data|hist|valor|descric/i.test(c))) {
+            headers = cells;
+            headerRowIdx = r;
+            break;
+          }
+        }
+        if (headers.length === 0) {
+          setErroParse('Não foi possível identificar cabeçalho. Garanta que a planilha tenha colunas: Data, Descrição, Valor');
+          return;
+        }
+        const idxData      = headers.findIndex(h => /data|dt/i.test(h));
+        const idxDescricao = headers.findIndex(h => /descric|hist|memo/i.test(h));
+        const idxValor     = headers.findIndex(h => /valor|amount|montante|cred|deb/i.test(h));
+        const idxTipo      = headers.findIndex(h => /tipo|type/i.test(h));
+        if (idxData < 0 || idxDescricao < 0 || idxValor < 0) {
+          setErroParse('Planilha precisa ter colunas: Data, Descrição, Valor');
+          return;
+        }
+
+        for (let r = headerRowIdx + 1; r <= sheet.rowCount; r++) {
+          const row = sheet.getRow(r);
+          const dataVal      = row.getCell(idxData + 1).value;
+          const descricaoVal = row.getCell(idxDescricao + 1).value;
+          const valorVal     = row.getCell(idxValor + 1).value;
+          const tipoVal      = idxTipo >= 0 ? row.getCell(idxTipo + 1).value : null;
+
+          const data = parseData(dataVal);
+          const valor = parseValor(valorVal);
+          if (!data || valor === null) continue;
+          const tipoTxt = String(tipoVal || '').toLowerCase();
+          const tipo: 'CREDITO' | 'DEBITO' = (
+            valor < 0 || tipoTxt.includes('deb') || tipoTxt.includes('saida') || tipoTxt === 'd'
+          ) ? 'DEBITO' : 'CREDITO';
+          parsedLines.push({
+            data, descricao: String(descricaoVal || '').trim().slice(0, 255),
+            valor: Math.abs(valor), tipo,
+          });
+        }
+      }
+
+      if (parsedLines.length === 0) {
+        setErroParse('Nenhuma linha válida encontrada. Confira datas e valores.');
+      } else {
+        setLinhas(parsedLines);
+      }
+    } catch (err: any) {
+      setErroParse(`Erro ao ler arquivo: ${err.message || 'formato inválido'}`);
+    }
+  }
+
+  async function handleImport() {
+    if (linhas.length === 0 || !contaId) return;
+    setLoading(true);
+    try {
+      const r = await onImport(contaId, linhas);
+      setResult(r);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-2xl max-h-[85vh] flex flex-col">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">Importar Planilha Bancária</h2>
+            <p className="text-sm text-zinc-400 mt-0.5">Excel (.xlsx) ou CSV. Mais simples que OFX para extratos manuais.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl">×</button>
+        </div>
+
+        <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">Conta Bancária *</label>
+            <select value={contaId} onChange={e => setContaId(Number(e.target.value))}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-white text-sm">
+              {contas.map(c => (
+                <option key={c.id} value={c.id}>{c.banco} — Ag {c.agencia} / C {c.conta} ({c.loja.nomeFantasia})</option>
+              ))}
+            </select>
+          </div>
+
+          <div
+            onClick={() => fileRef.current?.click()}
+            className="border-2 border-dashed border-zinc-700 hover:border-orange-500 rounded-xl p-8 text-center cursor-pointer transition-colors"
+          >
+            <div className="text-3xl mb-2">📊</div>
+            <p className="text-zinc-300 text-sm font-medium">
+              {fileName ? fileName : 'Clique para selecionar planilha (.xlsx ou .csv)'}
+            </p>
+            <p className="text-zinc-500 text-xs mt-1">
+              Colunas obrigatórias: <strong>Data</strong>, <strong>Descrição</strong>, <strong>Valor</strong>.
+              Opcional: <strong>Tipo</strong> (Crédito/Débito). Se faltar, é deduzido pelo sinal do valor.
+            </p>
+            <input ref={fileRef} type="file" accept=".xlsx,.csv,.XLSX,.CSV" onChange={handleFile} className="hidden" />
+          </div>
+
+          {erroParse && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400">
+              ❌ {erroParse}
+            </div>
+          )}
+
+          {linhas.length > 0 && !result && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-zinc-300 font-medium">
+                  ✓ {linhas.length} lançamento{linhas.length !== 1 ? 's' : ''} encontrado{linhas.length !== 1 ? 's' : ''} (preview):
+                </p>
+              </div>
+              <div className="bg-zinc-800/50 rounded-lg overflow-hidden border border-zinc-700">
+                <table className="w-full text-xs">
+                  <thead className="bg-zinc-800 text-zinc-400">
+                    <tr>
+                      <th className="text-left p-2">Data</th>
+                      <th className="text-left p-2">Descrição</th>
+                      <th className="text-right p-2">Valor</th>
+                      <th className="text-center p-2">Tipo</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-700">
+                    {linhas.slice(0, 10).map((l, i) => (
+                      <tr key={i}>
+                        <td className="p-2 text-zinc-300">{l.data.split('-').reverse().join('/')}</td>
+                        <td className="p-2 text-zinc-300 truncate max-w-[200px]" title={l.descricao}>{l.descricao}</td>
+                        <td className={`p-2 text-right font-semibold ${l.tipo === 'CREDITO' ? 'text-green-400' : 'text-red-400'}`}>
+                          {l.tipo === 'CREDITO' ? '+' : '-'}{fmtBRL(l.valor)}
+                        </td>
+                        <td className="p-2 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${l.tipo === 'CREDITO' ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
+                            {l.tipo === 'CREDITO' ? 'Crédito' : 'Débito'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {linhas.length > 10 && (
+                  <p className="text-xs text-zinc-500 text-center py-2 bg-zinc-800/30">+ {linhas.length - 10} linhas adicionais</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {result && (
+            <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-sm">
+              <p className="text-green-400 font-semibold mb-1">Importação concluída!</p>
+              <p className="text-zinc-300">✅ {result.importados} novos lançamentos</p>
+              {result.duplicados > 0 && <p className="text-zinc-400">⚠️ {result.duplicados} duplicatas ignoradas</p>}
+              {result.invalidos > 0 && <p className="text-zinc-400">⚠️ {result.invalidos} linhas inválidas</p>}
+              <p className="text-zinc-500 text-xs mt-1">Total enviado: {result.total} linhas</p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3 pt-4">
+          <button onClick={onClose} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg text-sm font-medium">
+            {result ? 'Fechar' : 'Cancelar'}
+          </button>
+          {!result && (
+            <button onClick={handleImport} disabled={loading || linhas.length === 0 || !contaId}
+              className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
+              {loading ? 'Importando...' : `Importar ${linhas.length} linhas`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal: Auto-Conciliar (matching inteligente em lote) ─────────────────────
+
+interface SugestaoConciliacao {
+  lancamentoId: number;
+  data: string;
+  descricao: string;
+  valor: number;
+  tipo: string;
+  candidato: { tipo: 'pagamento' | 'recebimento'; id: number; valor: number; data: string; descricao: string } | null;
+  confianca: 'alta' | 'media' | 'baixa';
+}
+
+function ModalAutoConciliar({ contaId, onAplicar, onClose }: {
+  contaId: number;
+  onAplicar: (aplicacoes: Array<{ lancamentoId: number; tipo: 'pagamento' | 'recebimento'; candidatoId: number }>) => Promise<{ aplicadas: number; falhas: number }>;
+  onClose: () => void;
+}) {
+  const [sugestoes, setSugestoes] = useState<SugestaoConciliacao[]>([]);
+  const [selecionadas, setSelecionadas] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [aplicando, setAplicando] = useState(false);
+  const [result, setResult] = useState<{ aplicadas: number; falhas: number } | null>(null);
+
+  useEffect(() => {
+    api.post<any>(`/conciliacao-bancaria/contas/${contaId}/auto-conciliar/sugerir`, {})
+      .then(d => {
+        const lista = d.sugestoes || [];
+        setSugestoes(lista);
+        // Pré-seleciona alta confiança
+        const altas = new Set<number>(lista.filter((s: SugestaoConciliacao) => s.candidato && s.confianca === 'alta').map((s: SugestaoConciliacao) => s.lancamentoId));
+        setSelecionadas(altas);
+      })
+      .catch(() => setSugestoes([]))
+      .finally(() => setLoading(false));
+  }, [contaId]);
+
+  function toggle(id: number) {
+    setSelecionadas(p => {
+      const n = new Set(p);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  function selecionarTodas(filtro: 'alta' | 'todas' | 'nenhuma') {
+    if (filtro === 'nenhuma') return setSelecionadas(new Set());
+    setSelecionadas(new Set(sugestoes.filter(s => s.candidato && (filtro === 'todas' || s.confianca === 'alta')).map(s => s.lancamentoId)));
+  }
+
+  async function aplicar() {
+    const aplicacoes = sugestoes
+      .filter(s => selecionadas.has(s.lancamentoId) && s.candidato)
+      .map(s => ({ lancamentoId: s.lancamentoId, tipo: s.candidato!.tipo, candidatoId: s.candidato!.id }));
+    if (aplicacoes.length === 0) return;
+    setAplicando(true);
+    try {
+      const r = await onAplicar(aplicacoes);
+      setResult(r);
+    } finally {
+      setAplicando(false);
+    }
+  }
+
+  const comCandidato = sugestoes.filter(s => s.candidato);
+  const semCandidato = sugestoes.filter(s => !s.candidato);
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-zinc-900 rounded-xl p-6 w-full max-w-4xl max-h-[88vh] flex flex-col">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-bold text-white">🤖 Auto-Conciliação Inteligente</h2>
+            <p className="text-sm text-zinc-400 mt-0.5">Sugestões por valor exato + janela de ±5 dias. Revise antes de aplicar.</p>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white text-xl">×</button>
+        </div>
+
+        {loading ? (
+          <p className="text-zinc-400 text-center py-12">Buscando candidatos...</p>
+        ) : result ? (
+          <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 text-sm">
+            <p className="text-green-400 font-semibold mb-1">Aplicação concluída!</p>
+            <p className="text-zinc-300">✅ {result.aplicadas} conciliações aplicadas</p>
+            {result.falhas > 0 && <p className="text-zinc-400">⚠️ {result.falhas} falhas</p>}
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="bg-zinc-800 rounded-lg p-3">
+                <p className="text-xs text-zinc-400">Pendentes analisados</p>
+                <p className="text-xl font-bold text-white">{sugestoes.length}</p>
+              </div>
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                <p className="text-xs text-green-400">Com sugestão</p>
+                <p className="text-xl font-bold text-green-400">{comCandidato.length}</p>
+              </div>
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                <p className="text-xs text-yellow-400">Sem candidato</p>
+                <p className="text-xl font-bold text-yellow-400">{semCandidato.length}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 mb-3 text-xs">
+              <span className="text-zinc-400">Selecionar:</span>
+              <button onClick={() => selecionarTodas('alta')} className="px-2 py-1 bg-green-500/15 hover:bg-green-500/25 text-green-400 rounded">Só alta confiança</button>
+              <button onClick={() => selecionarTodas('todas')} className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 text-white rounded">Todas com candidato</button>
+              <button onClick={() => selecionarTodas('nenhuma')} className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded">Nenhuma</button>
+              <span className="ml-auto text-zinc-300 font-medium">{selecionadas.size} selecionada(s)</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto border border-zinc-800 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-zinc-800 text-zinc-400 sticky top-0">
+                  <tr>
+                    <th className="p-2 w-8"></th>
+                    <th className="p-2 text-left">Lançamento (banco)</th>
+                    <th className="p-2 text-left">Candidato (ERP)</th>
+                    <th className="p-2 text-center">Confiança</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {comCandidato.map(s => (
+                    <tr key={s.lancamentoId} className={selecionadas.has(s.lancamentoId) ? 'bg-orange-500/5' : ''}>
+                      <td className="p-2 text-center">
+                        <input type="checkbox" checked={selecionadas.has(s.lancamentoId)} onChange={() => toggle(s.lancamentoId)}
+                          className="accent-orange-500 w-4 h-4 cursor-pointer" />
+                      </td>
+                      <td className="p-2">
+                        <div className="text-zinc-200">{s.descricao}</div>
+                        <div className="text-zinc-500 text-[10px]">{new Date(s.data).toLocaleDateString('pt-BR')} · <span className={s.tipo === 'CREDITO' ? 'text-green-400' : 'text-red-400'}>{s.tipo === 'CREDITO' ? '+' : '-'}{fmtBRL(s.valor)}</span></div>
+                      </td>
+                      <td className="p-2">
+                        <div className="text-zinc-200">{s.candidato!.descricao}</div>
+                        <div className="text-zinc-500 text-[10px]">{s.candidato!.tipo} #{s.candidato!.id} · {new Date(s.candidato!.data).toLocaleDateString('pt-BR')} · {fmtBRL(s.candidato!.valor)}</div>
+                      </td>
+                      <td className="p-2 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          s.confianca === 'alta' ? 'bg-green-500/15 text-green-400'
+                          : s.confianca === 'media' ? 'bg-yellow-500/15 text-yellow-400'
+                          : 'bg-zinc-700 text-zinc-400'
+                        }`}>{s.confianca}</span>
+                      </td>
+                    </tr>
+                  ))}
+                  {semCandidato.length > 0 && (
+                    <>
+                      <tr><td colSpan={4} className="p-2 bg-zinc-800/50 text-zinc-500 text-[10px] uppercase tracking-wider">Sem candidato (concilie manualmente):</td></tr>
+                      {semCandidato.map(s => (
+                        <tr key={s.lancamentoId} className="opacity-60">
+                          <td className="p-2"></td>
+                          <td className="p-2">
+                            <div className="text-zinc-300">{s.descricao}</div>
+                            <div className="text-zinc-500 text-[10px]">{new Date(s.data).toLocaleDateString('pt-BR')} · <span className={s.tipo === 'CREDITO' ? 'text-green-400' : 'text-red-400'}>{s.tipo === 'CREDITO' ? '+' : '-'}{fmtBRL(s.valor)}</span></div>
+                          </td>
+                          <td className="p-2 text-zinc-500 italic">—</td>
+                          <td className="p-2 text-center text-zinc-500">—</td>
+                        </tr>
+                      ))}
+                    </>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex gap-3 pt-4">
+              <button onClick={onClose} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2 rounded-lg text-sm font-medium">Cancelar</button>
+              <button onClick={aplicar} disabled={aplicando || selecionadas.size === 0}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-2 rounded-lg text-sm font-medium">
+                {aplicando ? 'Aplicando...' : `Conciliar ${selecionadas.size} selecionada(s)`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ConciliacaoBancaria() {
   const { user } = useAuth();
   const role = user?.role ?? '';
@@ -457,6 +925,9 @@ export function ConciliacaoBancaria() {
   const [showModalConta, setShowModalConta] = useState(false);
   const [showModalLancamento, setShowModalLancamento] = useState(false);
   const [showModalOFX, setShowModalOFX] = useState(false);
+  const [showModalPlanilha, setShowModalPlanilha] = useState(false);
+  const [showModalAutoConciliar, setShowModalAutoConciliar] = useState(false);
+  const [exportando, setExportando] = useState(false);
   const [modalConciliar, setModalConciliar] = useState<Lancamento | null>(null);
   const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
 
@@ -521,6 +992,52 @@ export function ConciliacaoBancaria() {
     return { importados: d.importados, duplicados: d.duplicados, total: d.total };
   }
 
+  async function importarPlanilha(contaId: number, linhas: LinhaPlanilha[]) {
+    const d = await api.post<any>(`/conciliacao-bancaria/contas/${contaId}/importar-planilha`, { lancamentos: linhas });
+    await loadAll();
+    flash('ok', `Planilha importada: ${d.importados} novos, ${d.duplicados} duplicados`);
+    return { importados: d.importados, duplicados: d.duplicados, invalidos: d.invalidos, total: d.total };
+  }
+
+  async function aplicarAutoConciliar(aplicacoes: Array<{ lancamentoId: number; tipo: 'pagamento' | 'recebimento'; candidatoId: number }>) {
+    const d = await api.post<any>('/conciliacao-bancaria/auto-conciliar/aplicar', { aplicacoes });
+    await loadAll();
+    flash('ok', `${d.aplicadas} conciliações aplicadas automaticamente`);
+    return { aplicadas: d.aplicadas, falhas: d.falhas };
+  }
+
+  async function exportarExcel() {
+    if (!contaSelecionada) {
+      flash('erro', 'Selecione uma conta bancária antes de exportar.');
+      return;
+    }
+    setExportando(true);
+    try {
+      const params = new URLSearchParams();
+      if (filtroMes) params.set('mes', filtroMes);
+      if (filtroConciliado !== '') params.set('conciliado', filtroConciliado);
+      // Usa fetch direto para receber blob binário (api.get retorna JSON)
+      const token = localStorage.getItem('token') || '';
+      const resp = await fetch(`/api/conciliacao-bancaria/contas/${contaSelecionada}/exportar-excel?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error('Falha ao exportar');
+      const blob = await resp.blob();
+      const contaSel = contas.find(c => c.id === contaSelecionada);
+      const filename = `extrato-${(contaSel?.banco || 'banco').replace(/\s/g, '_')}-${contaSel?.agencia || ''}-${contaSel?.conta || ''}${filtroMes ? '-' + filtroMes : ''}.xlsx`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      flash('ok', 'Excel gerado com sucesso!');
+    } catch (e: any) {
+      flash('erro', e.message || 'Erro ao exportar Excel');
+    } finally {
+      setExportando(false);
+    }
+  }
+
   async function conciliar(lancamentoId: number, data: { pagamentoId?: number; recebimentoId?: number }) {
     try {
       await api.post(`/conciliacao-bancaria/lancamentos/${lancamentoId}/conciliar`, data);
@@ -560,13 +1077,30 @@ export function ConciliacaoBancaria() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">🏦 Conciliação Bancária</h1>
-          <p className="text-zinc-500 text-sm mt-0.5">Importe extratos OFX e concilie com lançamentos financeiros</p>
+          <p className="text-zinc-500 text-sm mt-0.5">Importe OFX ou planilha, concilie em lote e exporte para o contador.</p>
         </div>
         {canEdit && (
           <div className="flex gap-2 flex-wrap">
+            <button onClick={() => setShowModalPlanilha(true)}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+              title="Importar extrato em Excel/CSV (mais simples que OFX)">
+              📊 Importar Planilha
+            </button>
             <button onClick={() => setShowModalOFX(true)}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+              title="Importar arquivo OFX exportado do internet banking">
               📄 Importar OFX
+            </button>
+            <button onClick={() => contaSelecionada ? setShowModalAutoConciliar(true) : flash('erro', 'Selecione uma conta primeiro')}
+              disabled={!contaSelecionada}
+              className="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+              title={contaSelecionada ? 'Sugerir conciliações automáticas' : 'Selecione uma conta primeiro'}>
+              🤖 Auto-Conciliar
+            </button>
+            <button onClick={exportarExcel} disabled={!contaSelecionada || exportando}
+              className="bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+              title={contaSelecionada ? 'Exportar extrato em Excel' : 'Selecione uma conta primeiro'}>
+              📥 {exportando ? 'Gerando...' : 'Exportar Excel'}
             </button>
             <button onClick={() => setShowModalLancamento(true)}
               className="bg-zinc-700 hover:bg-zinc-600 text-white px-4 py-2 rounded-lg text-sm font-medium">
@@ -795,6 +1329,21 @@ export function ConciliacaoBancaria() {
           contaPreSelecionada={contaSelecionada ?? undefined}
           onImport={importarOFX}
           onClose={() => setShowModalOFX(false)}
+        />
+      )}
+      {showModalPlanilha && (
+        <ModalPlanilha
+          contas={contas}
+          contaPreSelecionada={contaSelecionada ?? undefined}
+          onImport={importarPlanilha}
+          onClose={() => setShowModalPlanilha(false)}
+        />
+      )}
+      {showModalAutoConciliar && contaSelecionada && (
+        <ModalAutoConciliar
+          contaId={contaSelecionada}
+          onAplicar={aplicarAutoConciliar}
+          onClose={() => setShowModalAutoConciliar(false)}
         />
       )}
       {modalConciliar && (

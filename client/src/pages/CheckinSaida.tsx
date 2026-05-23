@@ -103,7 +103,7 @@ function formatarPagamento(fp: string, parcelas?: number, valor?: number): strin
   };
   const label = labels[fp] || fp;
   if ((fp === 'CARTAO_CREDITO' || fp === 'FINANCIAMENTO') && parcelas && parcelas > 1 && valor) {
-    return `${label} — ${parcelas}x de R$ ${(valor / parcelas).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`;
+    return `${label} — ${parcelas}x de R$ ${(valor / parcelas).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   return label;
 }

@@ -334,7 +334,7 @@ router.post('/', async (req: AuthRequest, res) => {
       acao:       tipoVenda === 'ORCAMENTO' ? 'CRIAR_ORCAMENTO' : 'CRIAR_VENDA',
       entidade:   'VENDA',
       entidadeId: venda.id,
-      detalhes:   `${tipoVenda === 'ORCAMENTO' ? 'Orçamento' : 'Venda'} #${venda.id} criado para "${(venda as any).cliente?.nome || clienteId}" — R$ ${valorTotal.toFixed(2)} [${statusVenda}]`,
+      detalhes:   `${tipoVenda === 'ORCAMENTO' ? 'Orçamento' : 'Venda'} #${venda.id} criado para "${(venda as any).cliente?.nome || clienteId}" — R$ ${Number(valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} [${statusVenda}]`,
       ip: obterIp(req),
     });
 
@@ -677,7 +677,7 @@ router.delete('/:id', requireRole('ADMIN_GERAL', 'GERENTE_LOJA', 'DONO_LOJA'), a
       acao:       'EXCLUIR_VENDA',
       entidade:   'VENDA',
       entidadeId: Number(req.params.id),
-      detalhes:   `Venda/Orçamento #${req.params.id} excluído (tipo: ${venda.tipo}, valor: R$ ${Number(venda.valorTotal).toFixed(2)})`,
+      detalhes:   `Venda/Orçamento #${req.params.id} excluído (tipo: ${venda.tipo}, valor: R$ ${Number(venda.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`,
       ip: obterIp(req),
     });
 

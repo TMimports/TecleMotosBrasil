@@ -33,7 +33,11 @@
       "Bash(npm outdated *)",
       "Bash(npm audit *)",
       "Bash(npm view *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(npx prisma@5.22.0 validate --schema server/prisma/schema.prisma)",
+      "Bash(NODE_OPTIONS=--max-old-space-size=6144 npm run build)",
+      "PowerShell($env:NODE_OPTIONS=\"--max-old-space-size=8192\"; Set-Location \"C:\\\\Users\\\\mario\\\\OneDrive\\\\Área de Trabalho\\\\ERP\\\\TecleMotosBrasil\\\\client\"; npx tsc -b 2>&1 | Select-Object -Last 25)",
+      "PowerShell(Get-Process *)"
     ]
   }
 }

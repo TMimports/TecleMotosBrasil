@@ -186,7 +186,7 @@ export function Servicos() {
                   <div className="flex items-center justify-between">
                     <span className="text-gray-500 text-sm">Preco</span>
                     <span className="text-xl font-bold text-green-400">
-                      R$ {Number(servico.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {Number(servico.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>

@@ -507,7 +507,7 @@ export function Garantias() {
                                   {v.id === grupo.vendaId && <span className="ml-2 text-orange-400 font-semibold text-[10px]">ESTA VENDA</span>}
                                 </div>
                                 <div className="text-right">
-                                  <span className="text-zinc-300 font-medium">R$ {Number(v.valorTotal).toFixed(2).replace('.', ',')}</span>
+                                  <span className="text-zinc-300 font-medium">R$ {Number(v.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                   <span className="text-zinc-500 ml-2">{new Date(v.createdAt).toLocaleDateString('pt-BR')}</span>
                                 </div>
                               </div>
@@ -539,7 +539,7 @@ export function Garantias() {
                                   </div>
                                   <div className="flex items-center gap-3">
                                     <span className={`font-semibold ${statusColor[os.status] || 'text-zinc-400'}`}>{statusLabel[os.status] || os.status}</span>
-                                    <span className="text-zinc-300">R$ {Number(os.valorTotal).toFixed(2).replace('.', ',')}</span>
+                                    <span className="text-zinc-300">R$ {Number(os.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     <span className="text-zinc-500">{new Date(os.createdAt).toLocaleDateString('pt-BR')}</span>
                                   </div>
                                 </div>
