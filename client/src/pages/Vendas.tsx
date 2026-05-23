@@ -12,6 +12,11 @@ interface VendaItem {
   precoUnitario: number;
   desconto: number;
   unidadeFisicaId?: number;
+  unidadeFisica?: {
+    chassi?: string;
+    codigoMotor?: string;
+    cor?: string;
+  };
   produto?: { nome: string };
   servico?: { nome: string };
 }
@@ -69,6 +74,7 @@ interface ItemProduto {
   preco: number;
   desconto: string;
   descontoValor: string;
+  descontoModo: 'pct' | 'valor';
   tipo?: string;
   chassi?: string;
   motor?: string;
@@ -83,6 +89,7 @@ interface ItemMoto {
   preco: number;
   desconto: string;
   descontoValor: string;
+  descontoModo: 'pct' | 'valor';
   chassi: string;
   motor: string;
   cor: string;
@@ -90,6 +97,7 @@ interface ItemMoto {
   unidadesPorModelo: UnidadeDisponivel[];
   alertaEstoque: boolean;
   carregandoUnidades: boolean;
+  chassiSearch: string;
 }
 
 interface PagamentoComp {
@@ -237,7 +245,7 @@ export function Vendas() {
   const maxDescontoRole = rolesLivres.includes(userRole) ? 100 : rolesCap15.includes(userRole) ? 15 : (configDescontos.descontoMaxMoto * 2);
 
   const adicionarItem = () => {
-    setItensSelecionados([...itensSelecionados, { produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', tipo: '', chassi: '', motor: '' }]);
+    setItensSelecionados([...itensSelecionados, { produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', descontoModo: 'pct', tipo: '', chassi: '', motor: '' }]);
   };
 
   const removerItem = (index: number) => {
@@ -257,15 +265,15 @@ export function Vendas() {
       }
       novos[index] = { ...novos[index], [field]: Math.max(1, value) };
     } else if (field === 'desconto') {
-      // % → calcula valor fixo
       const pct = parseFloat(value) || 0;
       const subtotal = novos[index].preco * novos[index].quantidade;
       novos[index] = { ...novos[index], desconto: value, descontoValor: (subtotal * pct / 100).toFixed(2) };
     } else if (field === 'descontoValor') {
-      // R$ → calcula %
       const subtotal = novos[index].preco * novos[index].quantidade;
       const pct = subtotal > 0 ? (parseFloat(value) || 0) / subtotal * 100 : 0;
       novos[index] = { ...novos[index], descontoValor: value, desconto: pct.toFixed(2) };
+    } else if (field === 'descontoModo') {
+      novos[index] = { ...novos[index], descontoModo: value as 'pct' | 'valor' };
     } else {
       novos[index] = { ...novos[index], [field]: value };
     }
@@ -273,7 +281,7 @@ export function Vendas() {
   };
 
   const adicionarMoto = () => {
-    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', chassi: '', motor: '', cor: '', displayName: '', unidadesPorModelo: [], alertaEstoque: false, carregandoUnidades: false }]);
+    setMotosSelecionadas([...motosSelecionadas, { unidadeId: '', produtoId: '', quantidade: 1, preco: 0, desconto: '0', descontoValor: '0', descontoModo: 'pct', chassi: '', motor: '', cor: '', displayName: '', unidadesPorModelo: [], alertaEstoque: false, carregandoUnidades: false, chassiSearch: '' }]);
   };
 
   const removerMoto = (index: number) => {
@@ -343,14 +351,16 @@ export function Vendas() {
         novas[index] = { ...novas[index], unidadeId: '', chassi: '', motor: '', cor: '' };
       }
     } else if (field === 'desconto') {
-      // % → calcula valor fixo
       const pct = parseFloat(value) || 0;
       novas[index] = { ...novas[index], desconto: value, descontoValor: (novas[index].preco * pct / 100).toFixed(2) };
     } else if (field === 'descontoValor') {
-      // R$ → calcula %
       const preco = novas[index].preco;
       const pct = preco > 0 ? (parseFloat(value) || 0) / preco * 100 : 0;
       novas[index] = { ...novas[index], descontoValor: value, desconto: pct.toFixed(2) };
+    } else if (field === 'descontoModo') {
+      novas[index] = { ...novas[index], descontoModo: value as 'pct' | 'valor' };
+    } else if (field === 'chassiSearch') {
+      novas[index] = { ...novas[index], chassiSearch: value };
     } else {
       novas[index] = { ...novas[index], [field]: value };
     }
@@ -418,11 +428,7 @@ export function Vendas() {
       const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
       return acc + sub * (1 - desc / 100);
     }, 0);
-    const total = totalPecas + totalMotos;
-    if (total % 1 !== 0) {
-      return Math.ceil(total);
-    }
-    return total;
+    return parseFloat((totalPecas + totalMotos).toFixed(2));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -455,12 +461,26 @@ export function Vendas() {
       return;
     }
 
-    // Validação de desconto máximo no frontend
-    const todoItens = [...motosSelecionadas.map(m => ({ desconto: parseFloat(m.desconto) || 0, nome: m.displayName || 'Moto' })),
-                       ...itensSelecionados.map(i => ({ desconto: parseFloat(i.desconto) || 0, nome: i.displayName || 'Peça' }))];
-    for (const it of todoItens) {
-      if (it.desconto > maxDescontoRole) {
-        setFormErro(`⚠️ Desconto máximo permitido: ${maxDescontoRole}%. Um ou mais itens estão acima do limite.`);
+    // Validação de desconto — pct > 100%, valor e limite de perfil
+    for (const m of motosSelecionadas) {
+      const pct = parseFloat(m.desconto) || 0;
+      if (m.descontoModo === 'pct' && pct > 100) {
+        setFormErro('⚠️ Desconto em % não pode ultrapassar 100%.');
+        return;
+      }
+      if (pct > maxDescontoRole) {
+        setFormErro(`⚠️ Desconto máximo permitido para este perfil: ${maxDescontoRole}%. Moto "${m.displayName || ''}" está acima do limite.`);
+        return;
+      }
+    }
+    for (const i of itensSelecionados) {
+      const pct = parseFloat(i.desconto) || 0;
+      if (i.descontoModo === 'pct' && pct > 100) {
+        setFormErro('⚠️ Desconto em % não pode ultrapassar 100%.');
+        return;
+      }
+      if (pct > maxDescontoRole) {
+        setFormErro(`⚠️ Desconto máximo permitido para este perfil: ${maxDescontoRole}%. Uma peça está acima do limite.`);
         return;
       }
     }
@@ -485,7 +505,7 @@ export function Vendas() {
       const nParcelas = parseInt(form.parcelas) || 1;
       const taxa = TAXAS_MAQUINA[nParcelas] ?? 0;
       const comTaxa = totalFinal * (1 + taxa);
-      valorParaSalvar = comTaxa % 1 !== 0 ? Math.ceil(comTaxa) : comTaxa;
+      valorParaSalvar = parseFloat(comTaxa.toFixed(2));
     } else {
       // PIX, Dinheiro, Débito: sem encargo
       valorParaSalvar = totalFinal;
@@ -824,8 +844,14 @@ export function Vendas() {
                   const bruto = Number(item.precoUnitario) * item.quantidade;
                   const final = bruto * (1 - desc / 100);
                   const nome  = item.produto?.nome || item.servico?.nome || '-';
+                  const uf = item.unidadeFisica;
+                  const detalhesUnidade = uf ? `<div style="font-size:10px;color:#888;margin-top:3px;font-family:monospace">` +
+                    `${uf.chassi ? 'Chassi: ' + uf.chassi : 'Chassi: Não informado'}` +
+                    `${uf.codigoMotor ? ' · Motor: ' + uf.codigoMotor : ''}` +
+                    `${uf.cor ? ' · Cor: ' + uf.cor : ''}` +
+                    `</div>` : '';
                   return `<tr>
-                    <td>${nome}</td>
+                    <td>${nome}${detalhesUnidade}</td>
                     <td>${item.quantidade}</td>
                     <td>R$ ${Number(item.precoUnitario).toLocaleString('pt-BR',{minimumFractionDigits:2})}</td>
                     <td style="color:${desc>0?'#ca8a04':'#bbb'}">${desc>0?desc+'%':'-'}</td>
@@ -894,6 +920,262 @@ export function Vendas() {
     printWindow.print();
   };
 
+  // VERSÃO PROVISÓRIA — sem persistência em banco (Fase 5 do plano de integração Check-in)
+  const handleLaudoSaida = (venda: VendaFull) => {
+    const nomeFantasia = (venda.loja?.nomeFantasia || '').toLowerCase();
+    const isTMImports = venda.loja?.id === 4
+      || nomeFantasia.includes('tm import')
+      || nomeFantasia.includes('importa');
+    const logoUrl   = `${window.location.origin}/${isTMImports ? 'logo-tm.png' : 'logo.png'}`;
+    const brandName = isTMImports ? 'TM Imports' : 'Tecle Motos';
+
+    const numeroSerie = `LDS-${venda.id.toString().padStart(6, '0')}`;
+    const dataVenda   = venda.createdAt
+      ? new Date(venda.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : '-';
+    const dataHoraGeracao = new Date().toLocaleString('pt-BR');
+
+    // Monta dados das motos vendidas
+    const motosHtml = (venda.itens || [])
+      .filter(it => it.unidadeFisica)
+      .map(it => {
+        const uf = it.unidadeFisica!;
+        const nome = it.produto?.nome || '-';
+        return `
+          <tr>
+            <td>${nome}</td>
+            <td>${uf.chassi || '<span style="color:#b91c1c">Não informado</span>'}</td>
+            <td>${uf.codigoMotor || '-'}</td>
+            <td>${uf.cor || '-'}</td>
+          </tr>`;
+      }).join('');
+
+    const temMoto = motosHtml.length > 0;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Laudo de Saída ${numeroSerie}</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family: Arial, sans-serif; color: #1a1a1a; background: #fff; font-size: 13px; }
+
+    /* ── Topo ── */
+    .stripe { display:flex; height:18px; width:100%; }
+    .stripe-black  { background:#0a0a0a; flex:2; }
+    .stripe-orange { background:#f97316; flex:5; }
+    .stripe-white  { background:#f0f0f0; flex:1; }
+    .brand-header {
+      background:#111; display:flex; align-items:center;
+      justify-content:space-between; padding:14px 30px;
+    }
+    .brand-header img { height:52px; object-fit:contain; }
+    .brand-right { text-align:right; }
+    .doc-label  { font-size:9px; font-weight:700; letter-spacing:2px; color:#f97316; text-transform:uppercase; }
+    .doc-num    { font-size:20px; font-weight:900; color:#fff; line-height:1.1; }
+    .doc-meta   { font-size:10px; color:#9ca3af; margin-top:2px; }
+    .doc-loja   { font-size:11px; color:#d1d5db; margin-top:2px; }
+    .orange-bar { height:3px; background:#f97316; }
+
+    /* ── Corpo ── */
+    .body { padding:20px 30px; }
+    .provisorio-aviso {
+      background:#fef3c7; border:1px solid #f59e0b; border-radius:6px;
+      padding:7px 12px; font-size:10px; color:#92400e; margin-bottom:14px;
+    }
+
+    /* ── Seções ── */
+    .section { margin-bottom:18px; }
+    .section-title {
+      font-size:9px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase;
+      color:#f97316; border-bottom:1.5px solid #f97316; padding-bottom:3px; margin-bottom:10px;
+    }
+
+    /* ── Grid de info ── */
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:18px; }
+    .info-col p { font-size:12px; margin-bottom:3px; }
+    .info-col .lbl { color:#777; display:inline-block; min-width:90px; }
+    .info-col .val { font-weight:600; color:#111; }
+
+    /* ── Tabela de motos ── */
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    thead tr { background:#111; color:#fff; }
+    th { padding:7px 10px; font-size:11px; font-weight:600; text-align:left; }
+    tbody tr:nth-child(even) { background:#f8f8f8; }
+    td { padding:7px 10px; border-bottom:1px solid #eee; }
+
+    /* ── Checklist ── */
+    .checklist { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+    .check-item {
+      display:flex; align-items:flex-start; gap:8px;
+      padding:7px 10px; border-bottom:1px solid #f0f0f0;
+      font-size:12px;
+    }
+    .check-item:nth-child(odd) { border-right:1px solid #f0f0f0; }
+    .check-box {
+      width:15px; height:15px; border:1.5px solid #aaa;
+      border-radius:3px; flex-shrink:0; margin-top:1px;
+    }
+    .check-label { flex:1; color:#222; line-height:1.3; }
+    .obs-area {
+      margin-top:10px; border:1px solid #ddd; border-radius:6px;
+      padding:10px 12px; min-height:52px; background:#fafafa;
+      font-size:11px; color:#999;
+    }
+
+    /* ── Assinaturas ── */
+    .assin-grid { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-top:6px; }
+    .assin-box { text-align:center; }
+    .assin-line {
+      border-bottom:1.5px solid #333; height:56px; margin-bottom:6px;
+      background: repeating-linear-gradient(
+        transparent, transparent 55px, #eee 55px, #eee 56px
+      );
+    }
+    .assin-label { font-size:11px; color:#555; }
+    .assin-nome  { font-size:10px; color:#888; margin-top:2px; }
+    .assin-data  { font-size:10px; color:#999; margin-top:10px; }
+
+    /* ── Rodapé ── */
+    .footer {
+      margin-top:24px; padding-top:10px; border-top:1px solid #e5e5e5;
+      text-align:center; font-size:10px; color:#aaa;
+    }
+
+    @media print {
+      body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="stripe">
+    <div class="stripe-black"></div>
+    <div class="stripe-orange"></div>
+    <div class="stripe-white"></div>
+  </div>
+
+  <div class="brand-header">
+    <img src="${logoUrl}" alt="${brandName}" />
+    <div class="brand-right">
+      <div class="doc-label">Laudo de Saída</div>
+      <div class="doc-num">${numeroSerie}</div>
+      <div class="doc-meta">Venda #${venda.id.toString().padStart(5, '0')} &nbsp;·&nbsp; ${dataVenda}</div>
+      <div class="doc-loja">${venda.loja?.nomeFantasia || ''}</div>
+    </div>
+  </div>
+  <div class="orange-bar"></div>
+
+  <div class="body">
+
+    <div class="provisorio-aviso">
+      ⚠ Versão provisória — documento para impressão manual. Assinatura digital e persistência serão implementadas em fase futura.
+    </div>
+
+    <!-- Dados da venda + cliente -->
+    <div class="info-grid">
+      <div class="info-col">
+        <div class="section-title">Dados da Venda</div>
+        <p><span class="lbl">Nº da Venda:</span> <span class="val">#${venda.id.toString().padStart(5, '0')}</span></p>
+        <p><span class="lbl">Laudo:</span> <span class="val">${numeroSerie}</span></p>
+        <p><span class="lbl">Data:</span> <span class="val">${dataVenda}</span></p>
+        <p><span class="lbl">Loja:</span> <span class="val">${venda.loja?.nomeFantasia || '-'}</span></p>
+        <p><span class="lbl">Vendedor:</span> <span class="val">${venda.vendedor?.nome || '-'}</span></p>
+      </div>
+      <div class="info-col">
+        <div class="section-title">Dados do Cliente</div>
+        <p><span class="lbl">Nome:</span> <span class="val">${venda.cliente?.nome || '-'}</span></p>
+        ${venda.cliente?.cpfCnpj ? `<p><span class="lbl">CPF/CNPJ:</span> <span class="val">${venda.cliente.cpfCnpj}</span></p>` : ''}
+        ${venda.cliente?.telefone ? `<p><span class="lbl">Telefone:</span> <span class="val">${venda.cliente.telefone}</span></p>` : ''}
+        ${venda.cliente?.email ? `<p><span class="lbl">E-mail:</span> <span class="val">${venda.cliente.email}</span></p>` : ''}
+      </div>
+    </div>
+
+    <!-- Dados da moto -->
+    ${temMoto ? `
+    <div class="section">
+      <div class="section-title">Dados da Moto Entregue</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Modelo</th>
+            <th>Chassi</th>
+            <th>Cód. Motor</th>
+            <th>Cor</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${motosHtml}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Checklist de entrega -->
+    <div class="section">
+      <div class="section-title">Checklist de Entrega</div>
+      <div class="checklist">
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Manual de uso entregue</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Carregador entregue</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Chaves entregues</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Recibo de venda entregue</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de uso realizada</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de carregamento realizada</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Orientação de garantia realizada</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Estado visual da moto conferido</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Chassi conferido</div></div>
+        <div class="check-item"><div class="check-box"></div><div class="check-label">Motor conferido</div></div>
+        <div class="check-item" style="grid-column:1/-1"><div class="check-box"></div><div class="check-label">Cliente ciente das condições de garantia</div></div>
+      </div>
+      <div class="obs-area">Observações: __________________________________________________________________________________________________________</div>
+    </div>
+
+    <!-- Assinaturas -->
+    <div class="section">
+      <div class="section-title">Assinaturas</div>
+      <div class="assin-grid">
+        <div class="assin-box">
+          <div class="assin-line"></div>
+          <div class="assin-label">Assinatura do Cliente</div>
+          <div class="assin-nome">${venda.cliente?.nome || ''}</div>
+          <div class="assin-data">Data / Hora: _____ / _____ / _________ &nbsp; ____:____</div>
+        </div>
+        <div class="assin-box">
+          <div class="assin-line"></div>
+          <div class="assin-label">Assinatura do Vendedor</div>
+          <div class="assin-nome">${venda.vendedor?.nome || ''}</div>
+          <div class="assin-data">Data / Hora: _____ / _____ / _________ &nbsp; ____:____</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      ${brandName} &nbsp;·&nbsp; Laudo gerado em ${dataHoraGeracao}<br>
+      Este documento é válido somente com as assinaturas das partes.
+    </div>
+
+  </div>
+</body>
+</html>`);
+
+    printWindow.document.close();
+    printWindow.print();
+  };
+
+  const abrirLaudoSaida = async (id: number) => {
+    try {
+      const venda = await api.get<VendaFull>(`/vendas/${id}`);
+      handleLaudoSaida(venda);
+    } catch (err) {
+      console.error('Erro ao carregar venda para laudo:', err);
+      alert('Erro ao carregar dados da venda');
+    }
+  };
+
   const pagamentoLabels: Record<string, string> = {
     PIX: 'PIX',
     DINHEIRO: 'Dinheiro',
@@ -933,7 +1215,15 @@ export function Vendas() {
     try {
       const encontrado = await api.get<{ id: number; nome: string; telefone?: string; email?: string }>(`/clientes/por-documento/${doc}`).catch(() => null);
       if (encontrado) {
-        setQuickClienteErro(`${doc.length === 11 ? 'CPF' : 'CNPJ'} já cadastrado para: ${encontrado.nome}. Não é possível duplicar.`);
+        // Auto-seleciona o cliente existente e fecha o modal
+        if (!clientes.find(c => c.id === encontrado.id)) {
+          setClientes(prev => [...prev, encontrado]);
+        }
+        setForm(f => ({ ...f, clienteId: String(encontrado.id) }));
+        setShowQuickCliente(false);
+        setQuickCliente({ nome: '', cpfCnpj: '', telefone: '', email: '', cep: '', logradouro: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '' });
+        setQuickClienteErro('');
+        alert(`Cliente já cadastrado: ${encontrado.nome}. Selecionado automaticamente.`);
         return;
       }
       if (doc.length === 14) {
@@ -1068,6 +1358,16 @@ export function Vendas() {
                   <button onClick={() => abrirVisualizacao(venda.id)} className="btn btn-sm btn-secondary">
                     Ver
                   </button>
+                  {venda.tipo === 'VENDA' && !venda.deletedAt && (
+                    <button
+                      onClick={() => abrirLaudoSaida(venda.id)}
+                      className="btn btn-sm"
+                      style={{ background: '#1d4ed8', color: '#fff' }}
+                      title="Imprimir Laudo de Saída"
+                    >
+                      Laudo de Saída
+                    </button>
+                  )}
                   {venda.tipo === 'ORCAMENTO' && !venda.confirmadaFinanceiro && (
                     <button onClick={() => converterParaVenda(venda.id)} className="btn btn-sm btn-success">
                       Concluir
@@ -1200,23 +1500,35 @@ export function Vendas() {
                       />
                       <div className="flex gap-3 items-end flex-wrap">
                         {!isCartao && (
-                          <>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-xs text-zinc-500">Desconto %</span>
-                              <div className={`flex items-center w-24 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${parseFloat(item.desconto) > maxDescontoRole ? 'border-red-500 focus-within:border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-zinc-500">Desconto</span>
+                              <div className="flex rounded overflow-hidden border border-zinc-700">
+                                <button type="button"
+                                  onClick={() => atualizarMoto(index, 'descontoModo', 'pct')}
+                                  className={`px-2.5 py-0.5 text-xs font-medium transition-colors ${item.descontoModo === 'pct' ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                                  %
+                                </button>
+                                <button type="button"
+                                  onClick={() => atualizarMoto(index, 'descontoModo', 'valor')}
+                                  className={`px-2.5 py-0.5 text-xs font-medium transition-colors ${item.descontoModo === 'valor' ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                                  R$
+                                </button>
+                              </div>
+                            </div>
+                            {item.descontoModo === 'pct' ? (
+                              <div className={`flex items-center w-24 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${parseFloat(item.desconto) > maxDescontoRole || parseFloat(item.desconto) > 100 ? 'border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
                                 <input
-                                  type="number" step="0.1" min="0" max={maxDescontoRole}
+                                  type="number" step="0.1" min="0" max="100"
                                   value={item.desconto}
                                   onChange={(e) => atualizarMoto(index, 'desconto', e.target.value)}
-                                  className={`flex-1 min-w-0 bg-transparent py-2.5 pl-3 pr-1 text-sm outline-none border-none focus:ring-0 ${parseFloat(item.desconto) > maxDescontoRole ? 'text-red-400' : 'text-yellow-400'}`}
+                                  className={`flex-1 min-w-0 bg-transparent py-2.5 pl-3 pr-1 text-sm outline-none border-none focus:ring-0 ${parseFloat(item.desconto) > maxDescontoRole || parseFloat(item.desconto) > 100 ? 'text-red-400' : 'text-yellow-400'}`}
                                   placeholder="0"
                                 />
                                 <span className="pr-2 text-gray-500 text-xs shrink-0 select-none">%</span>
                               </div>
-                            </div>
-                            <div className="flex flex-col gap-0.5">
-                              <span className="text-xs text-zinc-500">Desconto R$</span>
-                              <div className="flex items-center w-28 bg-zinc-800 border border-zinc-700 rounded-lg focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors">
+                            ) : (
+                              <div className={`flex items-center w-28 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${item.preco > 0 && (parseFloat(item.descontoValor) / item.preco * 100) > maxDescontoRole ? 'border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
                                 <span className="pl-2 pr-0.5 text-gray-500 text-xs shrink-0 select-none whitespace-nowrap">-R$</span>
                                 <input
                                   type="number" step="0.01" min="0"
@@ -1226,8 +1538,8 @@ export function Vendas() {
                                   placeholder="0,00"
                                 />
                               </div>
-                            </div>
-                          </>
+                            )}
+                          </div>
                         )}
                         <div className="flex flex-col gap-0.5">
                           <span className="text-xs text-zinc-500">Preço</span>
@@ -1240,24 +1552,32 @@ export function Vendas() {
                       </div>
                     </div>
                     {item.produtoId && (
-                      <div className="mt-2 flex items-center gap-3 px-1 py-1.5 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
-                        <span className="text-xs text-zinc-500 shrink-0">Base da venda:</span>
-                        <span className="text-xl font-bold text-orange-400">
-                          R$ {Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </span>
-                        {parseFloat(item.desconto) > 0 && !isCartao && (
-                          <span className="text-xs text-zinc-500 ml-auto">
-                            Final: <span className="text-green-400 font-semibold">
-                              R$ {(item.preco * (1 - parseFloat(item.desconto) / 100)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                            </span>
+                      <div className="mt-2 rounded-lg border border-zinc-700/70 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/60">
+                          <span className="text-xs text-zinc-500">Base da venda</span>
+                          <span className="text-sm font-medium text-zinc-300">
+                            R$ {Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                           </span>
-                        )}
+                        </div>
+                        <div className="flex items-center justify-between px-3 py-2 bg-zinc-950/80">
+                          <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Valor Final</span>
+                          <span className={`text-2xl font-black ${parseFloat(item.desconto) > 0 && !isCartao ? 'text-green-400' : 'text-orange-400'}`}>
+                            R$ {(parseFloat(item.desconto) > 0 && !isCartao
+                              ? item.preco * (1 - parseFloat(item.desconto) / 100)
+                              : item.preco
+                            ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
                       </div>
                     )}
                     {item.produtoId && !isCartao && (
                       <div className="mt-1 ml-1">
-                        {parseFloat(item.desconto) > maxDescontoRole ? (
+                        {item.descontoModo === 'pct' && parseFloat(item.desconto) > 100 ? (
+                          <p className="text-xs text-red-400 font-medium">⚠ Desconto não pode ultrapassar 100%.</p>
+                        ) : parseFloat(item.desconto) > maxDescontoRole ? (
                           <p className="text-xs text-red-400 font-medium">⚠ O desconto máximo permitido para este perfil é de {maxDescontoRole}%.</p>
+                        ) : item.descontoModo === 'valor' && item.preco > 0 && (parseFloat(item.descontoValor) || 0) > item.preco * 0.10 ? (
+                          <p className="text-xs text-yellow-400">⚠ Desconto em valor ultrapassou 10% do preço base.</p>
                         ) : (
                           <p className="text-xs text-gray-500">Desconto máx. para este perfil: {maxDescontoRole}%</p>
                         )}
@@ -1276,14 +1596,29 @@ export function Vendas() {
                         {!item.carregandoUnidades && item.unidadesPorModelo.length > 0 && (
                           <div className="mt-3">
                             <label className="text-xs text-gray-400 mb-1 block">Unidade física (chassi) *</label>
+                            <input
+                              type="text"
+                              value={item.chassiSearch}
+                              onChange={(e) => atualizarMoto(index, 'chassiSearch', e.target.value)}
+                              placeholder="Filtrar por chassi, motor ou cor..."
+                              className="w-full mb-1.5 bg-zinc-900 border border-zinc-700 text-white rounded-lg px-3 h-9 text-sm outline-none focus:border-orange-500/50 font-mono placeholder:font-sans placeholder:text-zinc-500"
+                            />
                             <CustomSelect
                               value={item.unidadeId}
                               onChange={(val) => atualizarMoto(index, 'unidadeId', val)}
                               placeholder="Selecione o chassi..."
-                              options={item.unidadesPorModelo.map(u => ({
-                                value: String(u.id),
-                                label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
-                              }))}
+                              options={item.unidadesPorModelo
+                                .filter(u => {
+                                  if (!item.chassiSearch) return true;
+                                  const q = item.chassiSearch.toLowerCase();
+                                  return (u.chassi || '').toLowerCase().includes(q) ||
+                                         (u.codigoMotor || '').toLowerCase().includes(q) ||
+                                         (u.cor || '').toLowerCase().includes(q);
+                                })
+                                .map(u => ({
+                                  value: String(u.id),
+                                  label: `Chassi: ${u.chassi || 'N/A'} | Motor: ${u.codigoMotor || 'N/A'} | Cor: ${u.cor || 'N/A'}`
+                                }))}
                             />
                           </div>
                         )}
@@ -1371,23 +1706,35 @@ export function Vendas() {
                         />
                       </div>
                       {!isCartao && (
-                        <>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs text-zinc-500">Desconto %</span>
-                            <div className={`flex items-center w-24 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${parseFloat(item.desconto) > maxDescontoRole ? 'border-red-500 focus-within:border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-zinc-500">Desconto</span>
+                            <div className="flex rounded overflow-hidden border border-zinc-700">
+                              <button type="button"
+                                onClick={() => atualizarItem(index, 'descontoModo', 'pct')}
+                                className={`px-2.5 py-0.5 text-xs font-medium transition-colors ${item.descontoModo === 'pct' ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                                %
+                              </button>
+                              <button type="button"
+                                onClick={() => atualizarItem(index, 'descontoModo', 'valor')}
+                                className={`px-2.5 py-0.5 text-xs font-medium transition-colors ${item.descontoModo === 'valor' ? 'bg-orange-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                                R$
+                              </button>
+                            </div>
+                          </div>
+                          {item.descontoModo === 'pct' ? (
+                            <div className={`flex items-center w-24 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${parseFloat(item.desconto) > maxDescontoRole || parseFloat(item.desconto) > 100 ? 'border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
                               <input
-                                type="number" step="0.1" min="0" max={maxDescontoRole}
+                                type="number" step="0.1" min="0" max="100"
                                 value={item.desconto}
                                 onChange={(e) => atualizarItem(index, 'desconto', e.target.value)}
-                                className={`flex-1 min-w-0 bg-transparent py-2.5 pl-3 pr-1 text-sm outline-none border-none focus:ring-0 ${parseFloat(item.desconto) > maxDescontoRole ? 'text-red-400' : 'text-yellow-400'}`}
+                                className={`flex-1 min-w-0 bg-transparent py-2.5 pl-3 pr-1 text-sm outline-none border-none focus:ring-0 ${parseFloat(item.desconto) > maxDescontoRole || parseFloat(item.desconto) > 100 ? 'text-red-400' : 'text-yellow-400'}`}
                                 placeholder="0"
                               />
                               <span className="pr-2 text-gray-500 text-xs shrink-0 select-none">%</span>
                             </div>
-                          </div>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-xs text-zinc-500">Desconto R$</span>
-                            <div className="flex items-center w-28 bg-zinc-800 border border-zinc-700 rounded-lg focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors">
+                          ) : (
+                            <div className={`flex items-center w-28 bg-zinc-800 border rounded-lg focus-within:ring-1 focus-within:ring-orange-500/50 transition-colors ${item.preco > 0 && item.quantidade > 0 && (parseFloat(item.descontoValor) / (item.preco * item.quantidade) * 100) > maxDescontoRole ? 'border-red-500' : 'border-zinc-700 focus-within:border-orange-500'}`}>
                               <span className="pl-2 pr-0.5 text-gray-500 text-xs shrink-0 select-none whitespace-nowrap">-R$</span>
                               <input
                                 type="number" step="0.01" min="0"
@@ -1397,8 +1744,8 @@ export function Vendas() {
                                 placeholder="0,00"
                               />
                             </div>
-                          </div>
-                        </>
+                          )}
+                        </div>
                       )}
                       <div className="flex flex-col gap-0.5">
                         <span className="text-xs text-zinc-500">Preço</span>
@@ -1416,8 +1763,12 @@ export function Vendas() {
                     </div>
                     {item.produtoId && !isCartao && (
                       <div className="mt-1">
-                        {parseFloat(item.desconto) > maxDescontoRole ? (
+                        {item.descontoModo === 'pct' && parseFloat(item.desconto) > 100 ? (
+                          <p className="text-xs text-red-400 font-medium">⚠ Desconto não pode ultrapassar 100%.</p>
+                        ) : parseFloat(item.desconto) > maxDescontoRole ? (
                           <p className="text-xs text-red-400 font-medium">⚠ O desconto máximo permitido para este perfil é de {maxDescontoRole}%.</p>
+                        ) : item.descontoModo === 'valor' && item.preco > 0 && (parseFloat(item.descontoValor) || 0) > item.preco * item.quantidade * 0.10 ? (
+                          <p className="text-xs text-yellow-400">⚠ Desconto em valor ultrapassou 10% do subtotal.</p>
                         ) : (
                           <p className="text-xs text-gray-500">Desconto máx. para este perfil: {maxDescontoRole}%</p>
                         )}
@@ -1878,9 +2229,19 @@ export function Vendas() {
                           const desc = Number(item.desconto || 0);
                           const bruto = Number(item.precoUnitario) * item.quantidade;
                           const final = bruto * (1 - desc / 100);
+                          const uf = item.unidadeFisica;
                           return (
                             <tr key={i} className="border-b border-zinc-800">
-                              <td className="p-2">{item.produto?.nome || item.servico?.nome || '-'}</td>
+                              <td className="p-2">
+                                <span>{item.produto?.nome || item.servico?.nome || '-'}</span>
+                                {uf && (
+                                  <div className="text-[10px] text-zinc-500 font-mono mt-0.5 space-y-0">
+                                    <span>Chassi: {uf.chassi || 'Não informado'}</span>
+                                    {uf.codigoMotor && <span> · Motor: {uf.codigoMotor}</span>}
+                                    {uf.cor && <span> · Cor: {uf.cor}</span>}
+                                  </div>
+                                )}
+                              </td>
                               <td className="p-2 text-center">{item.quantidade}</td>
                               <td className="p-2 text-right">R$ {Number(item.precoUnitario).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                               <td className="p-2 text-right">
@@ -1986,6 +2347,15 @@ export function Vendas() {
             <button onClick={() => setViewModalOpen(false)} className="btn btn-secondary">
               Fechar
             </button>
+            {vendaDetalhada?.tipo === 'VENDA' && (
+              <button
+                onClick={() => handleLaudoSaida(vendaDetalhada)}
+                className="btn"
+                style={{ background: '#1d4ed8', color: '#fff' }}
+              >
+                Laudo de Saída
+              </button>
+            )}
             <button onClick={handlePrint} className="btn btn-primary">
               Imprimir
             </button>
