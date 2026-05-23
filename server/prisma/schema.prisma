@@ -403,13 +403,17 @@ model ContaPagar {
 
 model LogAuditoria {
   id         Int      @id @default(autoincrement())
-  usuarioId  Int
-  acao       String
-  entidade   String
+  usuarioId  Int?
+  acao       String   @default("")
+  entidade   String   @default("")
   entidadeId Int?
   dados      String?
+  userName   String?
+  userRole   String?
+  detalhes   String?
+  ip         String?
   createdAt  DateTime @default(now())
-  usuario    User     @relation(fields: [usuarioId], references: [id])
+  usuario    User?    @relation(fields: [usuarioId], references: [id])
 }
 
 model Comissao {

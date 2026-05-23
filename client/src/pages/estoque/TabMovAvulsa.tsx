@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 interface Loja    { id: number; nomeFantasia: string; }
 interface Produto { id: number; nome: string; tipo: string; codigo: string; }
@@ -140,31 +140,27 @@ export function TabMovAvulsa({ lojas }: { lojas: Loja[] }) {
     }));
   };
 
-  function baixarModeloEntrada() {
+  async function baixarModeloEntrada() {
     const anoAtual = new Date().getFullYear();
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Entradas');
+    sheet.columns = [{ width: 24 }, { width: 20 }, { width: 10 }, { width: 14 }, { width: 8 }, { width: 12 }];
+    [
       ['Chassi', 'Modelo', 'Cor', 'Cód. Motor', 'Ano', 'Custo (R$)'],
       ['9C2JKD...', 'TM13', 'Preto', 'MOT001', anoAtual, '8500,00'],
       ['9C2JKD...', 'TM14', 'Branco', 'MOT002', anoAtual, '9200,00'],
-    ]);
-    ws['!cols'] = [{ wch: 24 }, { wch: 20 }, { wch: 10 }, { wch: 14 }, { wch: 8 }, { wch: 12 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Entradas');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    ].forEach(row => sheet.addRow(row));
+    const buf = await workbook.xlsx.writeBuffer();
     const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     const a = document.createElement('a'); a.href = url; a.download = 'modelo_entrada_avulsa.xlsx'; a.click(); URL.revokeObjectURL(url);
   }
 
-  function baixarModeloSaida() {
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['Chassi'],
-      ['9C2JKD...'],
-      ['9C2JKD...'],
-    ]);
-    ws['!cols'] = [{ wch: 24 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Saidas');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  async function baixarModeloSaida() {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Saidas');
+    sheet.columns = [{ width: 24 }];
+    [['Chassi'], ['9C2JKD...'], ['9C2JKD...']].forEach(row => sheet.addRow(row));
+    const buf = await workbook.xlsx.writeBuffer();
     const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
     const a = document.createElement('a'); a.href = url; a.download = 'modelo_saida_avulsa.xlsx'; a.click(); URL.revokeObjectURL(url);
   }
@@ -174,11 +170,20 @@ export function TabMovAvulsa({ lojas }: { lojas: Loja[] }) {
     if (!file) return;
     setImportErroEntrada('');
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
-        const wb = XLSX.read(evt.target?.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(evt.target?.result as ArrayBuffer);
+        const ws = workbook.worksheets[0];
+        const data: any[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          data.push((row.values as any[]).slice(1).map((v: any) => {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'object' && v.text) return v.text;
+            if (typeof v === 'object' && v.result !== undefined) return v.result;
+            return v;
+          }));
+        });
         if (data.length < 2) { setImportErroEntrada('Planilha vazia.'); return; }
         const headers = (data[0] as any[]).map((h: any) => String(h).toLowerCase().trim());
         const col = (names: string[]) => names.reduce((found, n) => found >= 0 ? found : headers.findIndex(h => h.includes(n)), -1);
@@ -238,9 +243,18 @@ export function TabMovAvulsa({ lojas }: { lojas: Loja[] }) {
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const wb = XLSX.read(evt.target?.result, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json<any[]>(ws, { header: 1, defval: '' });
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(evt.target?.result as ArrayBuffer);
+        const ws = workbook.worksheets[0];
+        const data: any[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          data.push((row.values as any[]).slice(1).map((v: any) => {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'object' && v.text) return v.text;
+            if (typeof v === 'object' && v.result !== undefined) return v.result;
+            return v;
+          }));
+        });
         if (data.length < 2) { setImportErroSaida('Planilha vazia.'); return; }
         const headers = (data[0] as any[]).map((h: any) => String(h).toLowerCase().trim());
         const col = (names: string[]) => names.reduce((found, n) => found >= 0 ? found : headers.findIndex(h => h.includes(n)), -1);

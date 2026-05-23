@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, Fragment } from 'react';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { useAuth } from '../contexts/AuthContext';
 import { useLojaContext } from '../contexts/LojaContext';
 import { api } from '../services/api';
@@ -129,7 +129,7 @@ function ModalCadastroChassi({
   const inp = 'w-full bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500 placeholder-zinc-500';
   const lbl = 'block text-xs text-zinc-400 mb-1';
 
-  function baixarModeloChassi() {
+  async function baixarModeloChassi() {
     const nomeProduto = produtos.find(p => String(p.id) === produtoId)?.nome || 'Produto';
     const anoAtual = new Date().getFullYear();
     const sheetData = [
@@ -139,11 +139,11 @@ function ModalCadastroChassi({
       ['9C2HAXXXXXXXXXXXXY', nomeProduto, 'Branco', 'MOT002', anoAtual],
       ['9C2HAXXXXXXXXXXXXXZ', nomeProduto, 'Azul', 'MOT003', anoAtual],
     ];
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(sheetData);
-    ws['!cols'] = [{ wch: 24 }, { wch: 30 }, { wch: 12 }, { wch: 14 }, { wch: 8 }];
-    XLSX.utils.book_append_sheet(wb, ws, 'Chassis');
-    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Chassis');
+    sheet.columns = [{ width: 24 }, { width: 30 }, { width: 12 }, { width: 14 }, { width: 8 }];
+    sheetData.forEach(row => sheet.addRow(row));
+    const buf = await workbook.xlsx.writeBuffer();
     const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -160,10 +160,18 @@ function ModalCadastroChassi({
     const reader = new FileReader();
     reader.onload = async (ev) => {
       try {
-        const data = new Uint8Array(ev.target!.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: 'array' });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const raw: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(ev.target!.result as ArrayBuffer);
+        const ws = workbook.worksheets[0];
+        const raw: any[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          raw.push((row.values as any[]).slice(1).map((v: any) => {
+            if (v === null || v === undefined) return '';
+            if (typeof v === 'object' && v.text) return v.text;
+            if (typeof v === 'object' && v.result !== undefined) return v.result;
+            return v;
+          }));
+        });
         if (raw.length < 2) { setImportErro('Planilha vazia ou sem dados.'); return; }
 
         // Detecta índices pelas colunas do cabeçalho

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { prisma } from '../index.js';
 import { verifyToken } from '../middleware/auth.js';
 
@@ -16,10 +16,24 @@ const upload = multer({
   }
 });
 
-// Sanitiza dados lidos pelo xlsx para interromper Prototype Pollution (GHSA-4r6h-8v6p-xvw6)
-// JSON.parse(JSON.stringify) cria objetos limpos sem herança de protótipo contaminado
-function sanitizarPlanilha(dados: any[][]): any[][] {
-  return JSON.parse(JSON.stringify(dados));
+// Lê um buffer .xlsx e retorna array de arrays (equivalente ao antigo XLSX.utils.sheet_to_json com header:1)
+// Usa exceljs (sem vulnerabilidades conhecidas) em substituição ao xlsx (GHSA-4r6h-8v6p-xvw6)
+async function lerPlanilha(buffer: Buffer): Promise<any[][]> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  const sheet = workbook.worksheets[0];
+  const rows: any[][] = [];
+  sheet.eachRow({ includeEmpty: false }, (row) => {
+    rows.push(
+      (row.values as any[]).slice(1).map((v: any) => {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'object' && v.text) return v.text;  // rich text / formula
+        if (typeof v === 'object' && v.result !== undefined) return v.result; // formula result
+        return v;
+      })
+    );
+  });
+  return rows;
 }
 
 // ── Utilitários ───────────────────────────────────────────────────────────────
@@ -129,9 +143,7 @@ router.post('/produtos', verifyToken, upload.single('arquivo'), async (req, res)
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
+    const dados = await lerPlanilha(req.file.buffer);
 
     if (dados.length < 2) return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 
@@ -246,9 +258,7 @@ router.post('/servicos', verifyToken, upload.single('arquivo'), async (req, res)
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
+    const dados = await lerPlanilha(req.file.buffer);
 
     const headerRaw: string[] = (dados[0] as any[]).map(h => String(h ?? '').toLowerCase().trim());
     const iNome   = colIdx(headerRaw, ['nome', 'servico', 'serviço', 'descricao', 'descrição']);
@@ -300,9 +310,7 @@ router.post('/unidades', verifyToken, upload.single('arquivo'), async (req, res)
     const { lojaId } = req.body;
     if (!lojaId) return res.status(400).json({ error: 'Loja é obrigatória' });
 
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const dados = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
+    const dados = await lerPlanilha(req.file.buffer);
 
     const headerRaw: string[] = (dados[0] as any[]).map(h => String(h ?? '').toLowerCase().trim());
     const iProduto = colIdx(headerRaw, ['modelo', 'produto', 'nome', 'name']);
@@ -413,9 +421,7 @@ router.post('/estoque', verifyToken, upload.single('arquivo'), async (req: any, 
       return parcial?.id ?? null;
     }
 
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = sanitizarPlanilha(XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as any[][]);
+    const rows = await lerPlanilha(req.file.buffer);
 
     if (rows.length < 2) return res.status(400).json({ error: 'Planilha vazia ou sem dados' });
 
@@ -527,7 +533,7 @@ router.post('/estoque', verifyToken, upload.single('arquivo'), async (req: any, 
 });
 
 // ── GET /importacao/modelo/:tipo — baixar planilha modelo ────────────────────
-router.get('/modelo/:tipo', verifyToken, (req, res) => {
+router.get('/modelo/:tipo', verifyToken, async (req, res) => {
   const { tipo } = req.params;
 
   let sheetData: any[][];
@@ -584,20 +590,21 @@ router.get('/modelo/:tipo', verifyToken, (req, res) => {
     return res.status(400).json({ error: 'Tipo de modelo inválido. Use: produtos, servicos, unidades, estoque' });
   }
 
-  const wb  = XLSX.utils.book_new();
-  const ws  = XLSX.utils.aoa_to_sheet(sheetData);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet('Modelo');
 
   // Larguras automáticas das colunas
-  ws['!cols'] = sheetData[0].map((_: any, ci: number) => ({
-    wch: Math.max(...sheetData.map(r => String(r[ci] ?? '').length), 14)
+  sheet.columns = sheetData[0].map((_: any, ci: number) => ({
+    width: Math.max(...sheetData.map((r: any[]) => String(r[ci] ?? '').length), 14)
   }));
 
-  XLSX.utils.book_append_sheet(wb, ws, 'Modelo');
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  sheetData.forEach((row: any[]) => sheet.addRow(row));
+
+  const arrayBuffer = await workbook.xlsx.writeBuffer();
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(buffer);
+  res.send(Buffer.from(arrayBuffer));
 });
 
 // ── GET /importacao/gerar-codigo/:tipo ───────────────────────────────────────

@@ -1,5 +1,5 @@
 import { prisma } from '../index.js';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { sendEmail } from './email.js';
 
 export type TipoRelatorio = 'FINANCEIRO' | 'COMERCIAL' | 'GERAL';
@@ -362,13 +362,13 @@ function gerarHTMLRelatorio(tipo: TipoRelatorio, periodo: PeriodoRelatorio, dado
 </html>`;
 }
 
-function gerarPlanilhaXLSX(tipo: TipoRelatorio, dados: any, periodo: PeriodoRelatorio, inicio: Date, fim: Date): Buffer {
-  const wb = XLSX.utils.book_new();
+async function gerarPlanilhaXLSX(tipo: TipoRelatorio, dados: any, periodo: PeriodoRelatorio, inicio: Date, fim: Date): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
   const dataFmt = (d: Date) => d.toLocaleDateString('pt-BR');
 
   const addSheet = (nome: string, rows: any[][]) => {
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    XLSX.utils.book_append_sheet(wb, ws, nome);
+    const sheet = workbook.addWorksheet(nome);
+    rows.forEach(row => sheet.addRow(row));
   };
 
   addSheet('Capa', [
@@ -447,7 +447,8 @@ function gerarPlanilhaXLSX(tipo: TipoRelatorio, dados: any, periodo: PeriodoRela
     ]);
   }
 
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const arrayBuffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(arrayBuffer);
 }
 
 export async function gerarEEnviarRelatorio(tipo: TipoRelatorio, periodo: PeriodoRelatorio, destinatarios: { nome: string; email: string; lojaId?: number }[]) {
@@ -490,7 +491,7 @@ export async function gerarEEnviarRelatorio(tipo: TipoRelatorio, periodo: Period
 
     let attachments: any[] = [];
     try {
-      const xlsxBuffer = gerarPlanilhaXLSX(tipo, dadosDest, periodo, inicio, fim);
+      const xlsxBuffer = await gerarPlanilhaXLSX(tipo, dadosDest, periodo, inicio, fim);
       const nomeArq = `relatorio-${tipo.toLowerCase()}-${periodo.toLowerCase()}-${inicio.toISOString().split('T')[0]}.xlsx`;
       attachments = [{ filename: nomeArq, content: xlsxBuffer, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }];
     } catch (e) {
