@@ -242,6 +242,44 @@ export function Vendas() {
     }
   }, [form.lojaId]);
 
+  // Recalcula automaticamente o valor da última linha (restante) em COMBINADO
+  // sempre que itens/descontos/preços mudam — assim entrada + restante = totalFinal.
+  // Para PIX/Débito/Crédito/Financiamento simples não há pagamentosCompostos em uso,
+  // o total já é recalculado em cada render via calcularTotal().
+  useEffect(() => {
+    if (form.formaPagamento !== 'COMBINADO') return;
+    if (pagamentosCompostos.length < 2) return;
+    const total = Math.round(
+      (itensSelecionados.reduce((acc, item) => {
+        const sub = Math.round(item.preco * item.quantidade * 100) / 100;
+        if (item.descontoModo === 'valor') {
+          return acc + Math.round((sub - (parseFloat(item.descontoValor) || 0)) * 100) / 100;
+        }
+        const pct = parseFloat(item.desconto) || 0;
+        return acc + Math.round(sub * (1 - pct / 100) * 100) / 100;
+      }, 0)
+      + motosSelecionadas.reduce((acc, item) => {
+        const sub = Math.round(item.preco * item.quantidade * 100) / 100;
+        if (item.descontoModo === 'valor') {
+          return acc + Math.round((sub - (parseFloat(item.descontoValor) || 0)) * 100) / 100;
+        }
+        const pct = parseFloat(item.desconto) || 0;
+        return acc + Math.round(sub * (1 - pct / 100) * 100) / 100;
+      }, 0)) * 100
+    ) / 100;
+    const somaOutros = Math.round(
+      pagamentosCompostos.slice(0, -1).reduce((acc, p) => acc + (parseFloat(p.valor) || 0), 0) * 100
+    ) / 100;
+    const restante = Math.max(0, Math.round((total - somaOutros) * 100) / 100);
+    const ultimoIdx = pagamentosCompostos.length - 1;
+    const valorAtual = parseFloat(pagamentosCompostos[ultimoIdx].valor) || 0;
+    if (Math.round(valorAtual * 100) !== Math.round(restante * 100)) {
+      setPagamentosCompostos(prev => prev.map((p, idx) =>
+        idx === ultimoIdx ? { ...p, valor: restante > 0 ? restante.toFixed(2) : '' } : p
+      ));
+    }
+  }, [itensSelecionados, motosSelecionadas, form.formaPagamento]);
+
   // Papéis com trava de desconto em 15%
   const rolesCap15 = ['VENDEDOR', 'DONO_LOJA'];
   const rolesLivres = ['ADMIN_GERAL', 'ADMIN_FINANCEIRO', 'ADMIN_REDE'];
@@ -379,16 +417,23 @@ export function Vendas() {
   const isCombinado = form.formaPagamento === 'COMBINADO';
   const isCredito = form.formaPagamento === 'CARTAO_CREDITO' || form.formaPagamento === 'FINANCIAMENTO';
 
-  const totalPagamentosCompostos = pagamentosCompostos.reduce((acc, p) => acc + (parseFloat(p.valor) || 0), 0);
+  // Arredondamento seguro para centavos — nunca Math.ceil/floor em valores monetários
+  const roundMoney = (v: number): number => Math.round(v * 100) / 100;
+
+  const totalPagamentosCompostos = roundMoney(
+    pagamentosCompostos.reduce((acc, p) => acc + (parseFloat(p.valor) || 0), 0)
+  );
 
   // Total real que o cliente paga (entrada + financiado já com taxa da máquina)
-  const totalComEncargos = pagamentosCompostos.reduce((acc, p) => {
-    const val = parseFloat(p.valor) || 0;
-    const n = parseInt(p.parcelas) || 1;
-    const tipoCredito = p.tipo === 'CARTAO_CREDITO' || p.tipo === 'FINANCIAMENTO';
-    const taxa = tipoCredito ? (TAXAS_MAQUINA[n] ?? 0) : 0;
-    return acc + val * (1 + taxa);
-  }, 0);
+  const totalComEncargos = roundMoney(
+    pagamentosCompostos.reduce((acc, p) => {
+      const val = roundMoney(parseFloat(p.valor) || 0);
+      const n = parseInt(p.parcelas) || 1;
+      const tipoCredito = p.tipo === 'CARTAO_CREDITO' || p.tipo === 'FINANCIAMENTO';
+      const taxa = tipoCredito ? (TAXAS_MAQUINA[n] ?? 0) : 0;
+      return roundMoney(acc + roundMoney(val * (1 + taxa)));
+    }, 0)
+  );
 
   const addPagamento = () => setPagamentosCompostos(prev => [...prev, { tipo: 'CARTAO_CREDITO', valor: '', parcelas: '1', obs: '' }]);
   const removePagamento = (i: number) => setPagamentosCompostos(prev => prev.filter((_, idx) => idx !== i));
@@ -397,15 +442,17 @@ export function Vendas() {
 
   // Ao digitar o valor da entrada, auto-preenche o restante na última linha de crédito
   const updateEntrada = (valor: string) => {
-    updatePagamento(0, 'valor', valor);
     if (pagamentosCompostos.length >= 2) {
       const total = calcularTotal();
-      const entrada = parseFloat(valor) || 0;
-      const restante = Math.max(0, total - entrada);
-      // Atualiza última linha com o restante
+      const entrada = roundMoney(parseFloat(valor) || 0);
+      const restante = roundMoney(Math.max(0, total - entrada));
       setPagamentosCompostos(prev => prev.map((p, idx) =>
-        idx === prev.length - 1 ? { ...p, valor: restante > 0 ? restante.toFixed(2) : '' } : idx === 0 ? { ...p, valor } : p
+        idx === 0 ? { ...p, valor } :
+        idx === prev.length - 1 ? { ...p, valor: restante > 0 ? restante.toFixed(2) : '' } :
+        p
       ));
+    } else {
+      updatePagamento(0, 'valor', valor);
     }
   };
 
@@ -421,18 +468,26 @@ export function Vendas() {
 
   const precisaParcelas = (tipo: string) => tipo === 'CARTAO_CREDITO' || tipo === 'FINANCIAMENTO';
 
-  const calcularTotal = () => {
-    const totalPecas = itensSelecionados.reduce((acc, item) => {
-      const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
-    }, 0);
-    const totalMotos = motosSelecionadas.reduce((acc, item) => {
-      const sub = item.preco * item.quantidade;
-      const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-      return acc + sub * (1 - desc / 100);
-    }, 0);
-    return parseFloat((totalPecas + totalMotos).toFixed(2));
+  // Subtotal de um item respeitando o modo de desconto (valor ou %)
+  // Se descontoModo === 'valor': usa descontoValor diretamente (sem conversão % → valor)
+  // Se descontoModo === 'pct': calcula a partir do percentual
+  const itemFinal = (preco: number, qtd: number, desconto: string, descontoValor: string, descontoModo: 'pct' | 'valor'): number => {
+    const sub = roundMoney(preco * qtd);
+    if (isCartao) return sub;
+    if (descontoModo === 'valor') {
+      const dv = roundMoney(parseFloat(descontoValor) || 0);
+      return roundMoney(sub - dv);
+    }
+    const pct = parseFloat(desconto) || 0;
+    return roundMoney(sub * (1 - pct / 100));
+  };
+
+  const calcularTotal = (): number => {
+    const totalPecas = itensSelecionados.reduce((acc, item) =>
+      roundMoney(acc + itemFinal(item.preco, item.quantidade, item.desconto, item.descontoValor, item.descontoModo)), 0);
+    const totalMotos = motosSelecionadas.reduce((acc, item) =>
+      roundMoney(acc + itemFinal(item.preco, item.quantidade, item.desconto, item.descontoValor, item.descontoModo)), 0);
+    return roundMoney(totalPecas + totalMotos);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -489,12 +544,14 @@ export function Vendas() {
       }
     }
 
-    // Validação pagamento combinado
+    // Validação pagamento combinado — comparar valores arredondados em centavos
     const totalFinal = calcularTotal();
     if (isCombinado) {
-      const totalPag = pagamentosCompostos.reduce((acc, p) => acc + (parseFloat(p.valor) || 0), 0);
-      if (Math.abs(totalPag - totalFinal) > 0.01) {
-        setFormErro(`⚠️ Soma dos pagamentos (R$ ${totalPag.toFixed(2)}) ≠ total da venda (R$ ${totalFinal.toFixed(2)}). Corrija os valores.`);
+      const totalPag = roundMoney(
+        pagamentosCompostos.reduce((acc, p) => acc + roundMoney(parseFloat(p.valor) || 0), 0)
+      );
+      if (Math.round(totalPag * 100) !== Math.round(totalFinal * 100)) {
+        setFormErro(`⚠️ Soma dos pagamentos (R$ ${totalPag.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) ≠ total da venda (R$ ${totalFinal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}). Corrija os valores.`);
         return;
       }
     }
@@ -1443,7 +1500,7 @@ export function Vendas() {
               <div className="mt-3 pt-3 border-t border-zinc-700 flex justify-between items-center">
                 <span className="text-gray-500 text-sm">Valor Total</span>
                 <span className="text-xl font-bold text-green-400">
-                  R$ {Number(venda.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  R$ {Number(venda.valorTotal).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               </div>
             </div>
@@ -1535,7 +1592,7 @@ export function Vendas() {
                           const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : ` [${p.estoque} un]`;
                           return {
                             value: String(p.id),
-                            label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}`,
+                            label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                             disabled: p.estoque <= 0 && form.tipo === 'VENDA'
                           };
                         })}
@@ -1587,7 +1644,7 @@ export function Vendas() {
                           <span className="text-xs text-zinc-500">Preço</span>
                           <div className="flex items-center gap-1 bg-zinc-800/60 border border-zinc-700/50 rounded-lg px-2 py-1.5">
                             <span className="text-gray-500 text-xs">R$</span>
-                            <span className="text-green-400 text-sm font-medium">{Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            <span className="text-green-400 text-sm font-medium">{Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           </div>
                         </div>
                         <button type="button" onClick={() => removerMoto(index)} className="text-red-500 hover:text-red-400 font-bold mb-1">✕</button>
@@ -1598,16 +1655,13 @@ export function Vendas() {
                         <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/60">
                           <span className="text-xs text-zinc-500">Base da venda</span>
                           <span className="text-sm font-medium text-zinc-300">
-                            R$ {Number(item.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            R$ {roundMoney(Number(item.preco)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
                         <div className="flex items-center justify-between px-3 py-2 bg-zinc-950/80">
                           <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">Valor Final</span>
-                          <span className={`text-2xl font-black ${parseFloat(item.desconto) > 0 && !isCartao ? 'text-green-400' : 'text-orange-400'}`}>
-                            R$ {(parseFloat(item.desconto) > 0 && !isCartao
-                              ? item.preco * (1 - parseFloat(item.desconto) / 100)
-                              : item.preco
-                            ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          <span className={`text-2xl font-black ${(item.descontoModo === 'valor' ? (parseFloat(item.descontoValor) || 0) > 0 : parseFloat(item.desconto) > 0) && !isCartao ? 'text-green-400' : 'text-orange-400'}`}>
+                            R$ {itemFinal(item.preco, item.quantidade, item.desconto, item.descontoValor, item.descontoModo).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
                       </div>
@@ -1732,7 +1786,7 @@ export function Vendas() {
                         const statusTag = p.estoque <= 0 ? ' [Sem estoque]' : p.estoque <= 3 ? ` [Baixo: ${p.estoque}]` : ` [${p.estoque} un]`;
                         return {
                           value: String(p.id),
-                          label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toFixed(2)}`,
+                          label: `${p.nome}${statusTag} - R$ ${Number(p.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
                           disabled: p.estoque <= 0 && form.tipo === 'VENDA'
                         };
                       })}
@@ -1926,9 +1980,9 @@ export function Vendas() {
                   <p className="text-sm font-semibold text-orange-400">🔀 Pagamento Combinado</p>
                   <div className="text-right">
                     <p className="text-xs text-zinc-500">Base da venda</p>
-                    <p className="text-xs text-zinc-400">R$ {calcularTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-zinc-400">R$ {calcularTotal().toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     <p className="text-xs text-zinc-500 mt-0.5">Total a pagar (c/ encargos)</p>
-                    <p className="text-sm font-bold text-orange-300">R$ {totalComEncargos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    <p className="text-sm font-bold text-orange-300">R$ {totalComEncargos.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                 </div>
 
@@ -1954,7 +2008,7 @@ export function Vendas() {
                             {i === 0 ? '💰 Entrada' : `💳 Pagamento ${i + 1}`}
                           </span>
                           {i === 0 && pagamentosCompostos.length === 2 && restanteParaEste > 0 && (
-                            <span className="text-xs text-zinc-500">Restante: R$ {restanteParaEste.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            <span className="text-xs text-zinc-500">Restante: R$ {restanteParaEste.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           )}
                           {pagamentosCompostos.length > 1 && (
                             <button type="button" onClick={() => removePagamento(i)} className="text-red-400 hover:text-red-300 text-xs ml-auto pl-2">✕</button>
@@ -2080,26 +2134,31 @@ export function Vendas() {
             {(motosSelecionadas.filter(m => m.produtoId).length > 0 || itensSelecionados.filter(i => i.produtoId).length > 0) && (
               <div className="bg-zinc-800/50 rounded-lg p-3 space-y-2">
                 {motosSelecionadas.filter(m => m.produtoId).map((item, idx) => {
-                  const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const subtotal = roundMoney(item.preco * item.quantidade);
+                  const finalItem = itemFinal(item.preco, item.quantidade, item.desconto, item.descontoValor, item.descontoModo);
+                  const descontoValor = item.descontoModo === 'valor'
+                    ? roundMoney(parseFloat(item.descontoValor) || 0)
+                    : roundMoney(subtotal - finalItem);
+                  const temDesconto = !isCartao && descontoValor > 0;
+                  const pctDigitado = parseFloat(item.desconto) || 0;
                   return (
                     <div key={`m-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{item.displayName || 'Moto'}</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {temDesconto && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">
+                            {item.descontoModo === 'pct' ? `Desconto (${pctDigitado}%):` : 'Desconto:'}
+                          </span>
+                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {temDesconto && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -2108,26 +2167,31 @@ export function Vendas() {
                 {itensSelecionados.filter(i => i.produtoId).map((item, idx) => {
                   const produto = produtos.find(p => p.id === parseInt(item.produtoId));
                   const nomeExibicao = produto?.nome || 'Peca';
-                  const subtotal = item.preco * item.quantidade;
-                  const desc = isCartao ? 0 : (parseFloat(item.desconto) || 0);
-                  const descontoValor = subtotal * desc / 100;
-                  const finalItem = subtotal - descontoValor;
+                  const subtotal = roundMoney(item.preco * item.quantidade);
+                  const finalItem = itemFinal(item.preco, item.quantidade, item.desconto, item.descontoValor, item.descontoModo);
+                  const descontoValor = item.descontoModo === 'valor'
+                    ? roundMoney(parseFloat(item.descontoValor) || 0)
+                    : roundMoney(subtotal - finalItem);
+                  const temDesconto = !isCartao && descontoValor > 0;
+                  const pctDigitado = parseFloat(item.desconto) || 0;
                   return (
                     <div key={`p-${idx}`} className="text-xs border-b border-zinc-700/50 pb-2 last:border-0">
                       <div className="flex justify-between text-gray-300">
                         <span>{nomeExibicao} (x{item.quantidade})</span>
-                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-gray-400">R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
-                      {desc > 0 && (
+                      {temDesconto && (
                         <div className="flex justify-between mt-1">
-                          <span className="text-gray-500">Desconto ({desc}%):</span>
-                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-gray-500">
+                            {item.descontoModo === 'pct' ? `Desconto (${pctDigitado}%):` : 'Desconto:'}
+                          </span>
+                          <span className="text-red-400">- R$ {descontoValor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
-                      {desc > 0 && (
+                      {temDesconto && (
                         <div className="flex justify-between font-medium">
                           <span className="text-gray-500">Final:</span>
-                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                          <span className="text-green-400">R$ {finalItem.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       )}
                     </div>
@@ -2289,11 +2353,11 @@ export function Vendas() {
                                 )}
                               </td>
                               <td className="p-2 text-center">{item.quantidade}</td>
-                              <td className="p-2 text-right">R$ {Number(item.precoUnitario).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-2 text-right">R$ {Number(item.precoUnitario).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                               <td className="p-2 text-right">
                                 {desc > 0 ? <span className="text-yellow-400 font-semibold">{desc}%</span> : <span className="text-gray-600">-</span>}
                               </td>
-                              <td className="p-2 text-right font-semibold">R$ {final.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                              <td className="p-2 text-right font-semibold">R$ {final.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                           );
                         })}
@@ -2306,24 +2370,24 @@ export function Vendas() {
                     {desconto > 0.01 && (
                       <div className="flex justify-between w-56 text-sm">
                         <span className="text-gray-400">Desconto:</span>
-                        <span className="text-red-400">- R$ {desconto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-red-400">- R$ {desconto.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     )}
                     {encargos > 0.01 && (
                       <div className="flex justify-between w-56 text-sm">
                         <span className="text-gray-400">Encargos da máquina:</span>
-                        <span className="text-yellow-500">+ R$ {encargos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-yellow-500">+ R$ {encargos.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     )}
                     <div className="flex justify-between w-56 text-lg font-bold border-t-2 border-orange-500 pt-2 mt-1">
                       <span className="text-gray-300">Total a Pagar:</span>
-                      <span className="text-green-400">R$ {vTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                      <span className="text-green-400">R$ {vTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                     {/* Destaque parcelas */}
                     {nParcelas > 1 && vendaDetalhada?.formaPagamento !== 'COMBINADO' && (
                       <div className="flex justify-between w-56 text-sm text-gray-400 mt-0.5">
                         <span>{nParcelas}x de:</span>
-                        <span className="text-orange-400 font-bold">R$ {vParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        <span className="text-orange-400 font-bold">R$ {vParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                       </div>
                     )}
                   </div>
@@ -2344,8 +2408,8 @@ export function Vendas() {
                               <span className="text-gray-400">{labelFP(p.tipo)}</span>
                               <span className="text-white">
                                 {n > 1
-                                  ? <>{n}x de <span className="text-orange-400 font-bold">R$ {porParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span> = R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</>
-                                  : <span className="font-semibold">R$ {v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} à vista</span>
+                                  ? <>{n}x de <span className="text-orange-400 font-bold">R$ {porParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> = R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
+                                  : <span className="font-semibold">R$ {v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} à vista</span>
                                 }
                               </span>
                             </div>
@@ -2357,8 +2421,8 @@ export function Vendas() {
                         <span className="text-gray-400">{labelFP(vendaDetalhada?.formaPagamento || '')}</span>
                         <span className="text-white font-semibold">
                           {nParcelas > 1
-                            ? <>{nParcelas}x de <span className="text-orange-400">R$ {vParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span></>
-                            : <>R$ {vTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} à vista</>
+                            ? <>{nParcelas}x de <span className="text-orange-400">R$ {vParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></>
+                            : <>R$ {vTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} à vista</>
                           }
                         </span>
                       </div>
