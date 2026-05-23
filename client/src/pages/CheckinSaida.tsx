@@ -76,6 +76,30 @@ interface CheckinSaidaProps {
   onCancelar: () => void;
 }
 
+// Converte o canvas do signature-pad em dataURL com FUNDO BRANCO.
+// Necessário porque o canvas é transparente e JPEG não suporta canal alpha,
+// então o fundo transparente vira PRETO ao converter (tarja preta sobre os traços).
+// Solução: redesenhar a assinatura sobre um canvas com fundo branco antes de exportar.
+function assinaturaParaDataUrl(ref: { current: SignatureCanvas | null }): string {
+  try {
+    if (!ref.current || ref.current.isEmpty()) return '';
+    const trimmed = ref.current.getTrimmedCanvas();
+    const w = trimmed.width || 1;
+    const h = trimmed.height || 1;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d');
+    if (!ctx) return trimmed.toDataURL('image/png');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(trimmed, 0, 0);
+    return c.toDataURL('image/jpeg', 0.85);
+  } catch {
+    return '';
+  }
+}
+
 // ── Itens do checklist técnico ────────────────────────────────────────────────
 
 const CHECKLIST_INICIAL: ChecklistItemState[] = [
@@ -165,12 +189,9 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
   // ── Salvar rascunho ─────────────────────────────────────────────────────────
   const salvarRascunho = async () => {
     try {
-      const assinaturaCliente    = sigClienteRef.current?.isEmpty() ? '' :
-        sigClienteRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
-      const assinaturaVendedor   = sigVendedorRef.current?.isEmpty() ? '' :
-        sigVendedorRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
-      const assinaturaEntregador = sigEntregadorRef.current?.isEmpty() ? '' :
-        sigEntregadorRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
+      const assinaturaCliente    = assinaturaParaDataUrl(sigClienteRef);
+      const assinaturaVendedor   = assinaturaParaDataUrl(sigVendedorRef);
+      const assinaturaEntregador = assinaturaParaDataUrl(sigEntregadorRef);
 
       await api.post(`/checkin/${vendaId}`, {
         checklistJson: JSON.stringify(checklist),
@@ -212,10 +233,10 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
       return;
     }
 
-    const assinaturaCliente    = sigClienteRef.current!.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
-    const assinaturaVendedor   = sigVendedorRef.current!.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
+    const assinaturaCliente    = assinaturaParaDataUrl(sigClienteRef);
+    const assinaturaVendedor   = assinaturaParaDataUrl(sigVendedorRef);
     const assinaturaEntregador = sigEntregadorRef.current?.isEmpty()
-      ? undefined : sigEntregadorRef.current?.getTrimmedCanvas().toDataURL('image/jpeg', 0.5);
+      ? undefined : assinaturaParaDataUrl(sigEntregadorRef) || undefined;
 
     const agora = new Date().toISOString();
     setSalvando(true);
@@ -272,15 +293,9 @@ export function CheckinSaida({ vendaId, onConcluir, onCancelar }: CheckinSaidaPr
   // ficaria em branco e as assinaturas sumiriam do laudo.
   const imprimirLaudo = () => {
     if (!venda) return;
-    const tryCanvas = (ref: React.RefObject<SignatureCanvas | null>): string => {
-      try {
-        if (!ref.current || ref.current.isEmpty()) return '';
-        return ref.current.getTrimmedCanvas().toDataURL('image/jpeg', 0.5) || '';
-      } catch { return ''; }
-    };
-    const assinaturaClienteB64    = venda.checkin?.assinaturaCliente    || tryCanvas(sigClienteRef);
-    const assinaturaVendedorB64   = venda.checkin?.assinaturaVendedor   || tryCanvas(sigVendedorRef);
-    const assinaturaEntregadorB64 = venda.checkin?.assinaturaEntregador || tryCanvas(sigEntregadorRef);
+    const assinaturaClienteB64    = venda.checkin?.assinaturaCliente    || assinaturaParaDataUrl(sigClienteRef);
+    const assinaturaVendedorB64   = venda.checkin?.assinaturaVendedor   || assinaturaParaDataUrl(sigVendedorRef);
+    const assinaturaEntregadorB64 = venda.checkin?.assinaturaEntregador || assinaturaParaDataUrl(sigEntregadorRef);
 
     const nomeFantasia = (venda.loja?.nomeFantasia || '').toLowerCase();
     const isTM = nomeFantasia.includes('tm import') || nomeFantasia.includes('importa');
