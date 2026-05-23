@@ -120,6 +120,7 @@ model Produto {
   cst               String?
   ncm               String?
   unidade           UnidadeMedida      @default(UN)
+  manualUrl         String?
   auditoriaEstoque  AuditoriaEstoque[]
   estoques          Estoque[]
   itensNotaFiscal   ItemNotaFiscal[]
@@ -232,31 +233,34 @@ model Cliente {
 }
 
 model Venda {
-  id                   Int            @id @default(autoincrement())
+  id                   Int              @id @default(autoincrement())
   tipo                 TipoVenda
+  status               String           @default("FINALIZADA")
   clienteId            Int
   vendedorId           Int
   lojaId               Int
   formaPagamento       FormaPagamento
-  desconto             Decimal        @default(0) @db.Decimal(10, 2)
-  valorTotal           Decimal        @db.Decimal(10, 2)
-  valorBruto           Decimal?       @db.Decimal(10, 2)
+  desconto             Decimal          @default(0) @db.Decimal(10, 2)
+  valorTotal           Decimal          @db.Decimal(10, 2)
+  valorBruto           Decimal?         @db.Decimal(10, 2)
   parcelas             Int?
   observacoes          String?
   pagamentosJson       String?
-  confirmadaFinanceiro Boolean        @default(false)
+  confirmadaFinanceiro Boolean          @default(false)
   deletedAt            DateTime?
   deletedBy            Int?
-  createdAt            DateTime       @default(now())
-  updatedAt            DateTime       @updatedAt
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
   createdBy            Int?
+  checkin              VendaCheckin?
+  documentos           DocumentoVenda[]
   comissoes            Comissao[]
   garantias            Garantia[]
   itens                ItemVenda[]
   notasFiscais         NotaFiscal[]
-  cliente              Cliente        @relation(fields: [clienteId], references: [id])
-  loja                 Loja           @relation(fields: [lojaId], references: [id])
-  vendedor             User           @relation("VendaVendedor", fields: [vendedorId], references: [id])
+  cliente              Cliente          @relation(fields: [clienteId], references: [id])
+  loja                 Loja             @relation(fields: [lojaId], references: [id])
+  vendedor             User             @relation("VendaVendedor", fields: [vendedorId], references: [id])
 }
 
 model ItemVenda {
@@ -1070,6 +1074,40 @@ enum TipoConta {
   CP
   POUPANCA
   INVESTIMENTO
+}
+
+model VendaCheckin {
+  id                 Int       @id @default(autoincrement())
+  vendaId            Int       @unique
+  numeroSerie        String    @unique
+  checklistJson      String?
+  quilometragem      Int?
+  assinaturaCliente    String?
+  assinaturaVendedor   String?
+  assinaturaEntregador String?
+  nomeCliente          String?
+  nomeVendedor         String?
+  nomeEntregador       String?
+  assinadoClienteAt  DateTime?
+  assinadoVendedorAt DateTime?
+  finalizadoAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  venda              Venda     @relation(fields: [vendaId], references: [id])
+}
+
+model DocumentoVenda {
+  id                Int      @id @default(autoincrement())
+  vendaId           Int
+  tipo              String
+  numeroSerie       String
+  enviadoEmail      Boolean  @default(false)
+  enviadoWhatsapp   Boolean  @default(false)
+  erroEnvioEmail    String?
+  erroEnvioWhatsapp String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  venda             Venda    @relation(fields: [vendaId], references: [id])
 }
 
 enum TipoMovimentoEstoque {

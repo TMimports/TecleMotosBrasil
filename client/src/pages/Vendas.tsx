@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLojaContext } from '../contexts/LojaContext';
 import { CustomSelect } from '../components/CustomSelect';
 import { buscarCNPJ } from '../services/cnpj';
+import { CheckinSaida } from './CheckinSaida';
 
 interface VendaItem {
   id: number;
@@ -24,6 +25,7 @@ interface VendaItem {
 interface VendaFull {
   id: number;
   tipo: string;
+  status?: string;
   valorTotal: number;
   valorBruto: number;
   formaPagamento: string;
@@ -41,6 +43,7 @@ interface VendaFull {
 interface Venda {
   id: number;
   tipo: string;
+  status?: string;
   cliente: { nome: string };
   vendedor: { nome: string };
   valorTotal: number;
@@ -166,6 +169,7 @@ export function Vendas() {
   const [filtroTipoVenda, setFiltroTipoVenda] = useState('');
   const [filtroStatusVenda, setFiltroStatusVenda] = useState('');
   const [formErro, setFormErro] = useState('');
+  const [checkinVendaId, setCheckinVendaId] = useState<number | null>(null);
 
   const [form, setForm] = useState({
     clienteId: '',
@@ -551,6 +555,8 @@ export function Vendas() {
         valorTotalManual: valorParaSalvar
       });
 
+      const tipoRegistrado = form.tipo;
+
       setModalOpen(false);
       setForm({
         clienteId: '',
@@ -563,11 +569,18 @@ export function Vendas() {
       setItensSelecionados([]);
       setMotosSelecionadas([]);
       setPagamentosCompostos([{ tipo: 'PIX', valor: '', parcelas: '1', obs: '' }]);
+      setFormErro('');
       loadData();
 
-      const vendaCompleta = await api.get<VendaFull>(`/vendas/${novaVenda.id}`);
-      setVendaDetalhada(vendaCompleta);
-      setViewModalOpen(true);
+      if (tipoRegistrado === 'VENDA') {
+        // Venda efetiva → abrir check-in para assinatura e conferência
+        setCheckinVendaId(novaVenda.id);
+      } else {
+        // Orçamento → abrir comprovante normalmente
+        const vendaCompleta = await api.get<VendaFull>(`/vendas/${novaVenda.id}`);
+        setVendaDetalhada(vendaCompleta);
+        setViewModalOpen(true);
+      }
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -1276,6 +1289,17 @@ export function Vendas() {
     return <div className="flex items-center justify-center h-64">Carregando...</div>;
   }
 
+  // ── Tela de Check-in substitui a listagem quando ativa ──────────────────────
+  if (checkinVendaId !== null) {
+    return (
+      <CheckinSaida
+        vendaId={checkinVendaId}
+        onConcluir={() => { setCheckinVendaId(null); loadData(); }}
+        onCancelar={() => setCheckinVendaId(null)}
+      />
+    );
+  }
+
   const vendasFiltradas = vendas.filter(v => {
     if (filtroTipoVenda && v.tipo !== filtroTipoVenda) return false;
     if (filtroStatusVenda === 'confirmada' && !v.confirmadaFinanceiro) return false;
@@ -1345,20 +1369,34 @@ export function Vendas() {
           {vendasFiltradas.map(venda => (
             <div key={venda.id} className="card">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-gray-500">#{venda.id}</span>
                   <span className={`badge ${venda.tipo === 'ORCAMENTO' ? 'badge-warning' : 'badge-success'}`}>
-                    {venda.tipo === 'ORCAMENTO' ? 'Orcamento' : 'Venda'}
+                    {venda.tipo === 'ORCAMENTO' ? 'Orçamento' : 'Venda'}
                   </span>
-                  <span className={`badge ${venda.confirmadaFinanceiro ? 'badge-success' : 'badge-warning'}`}>
-                    {venda.confirmadaFinanceiro ? 'Confirmada' : 'Pendente'}
-                  </span>
+                  {venda.status === 'PENDENTE_CHECKIN' ? (
+                    <span className="badge" style={{ background: '#f97316', color: '#fff', fontSize: '10px' }}>
+                      Check-in Pendente
+                    </span>
+                  ) : (
+                    <span className={`badge ${venda.confirmadaFinanceiro ? 'badge-success' : 'badge-warning'}`}>
+                      {venda.confirmadaFinanceiro ? 'Confirmada' : 'Pendente'}
+                    </span>
+                  )}
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <button onClick={() => abrirVisualizacao(venda.id)} className="btn btn-sm btn-secondary">
                     Ver
                   </button>
-                  {venda.tipo === 'VENDA' && !venda.deletedAt && (
+                  {venda.tipo === 'VENDA' && !venda.deletedAt && venda.status === 'PENDENTE_CHECKIN' && (
+                    <button
+                      onClick={() => setCheckinVendaId(venda.id)}
+                      className="btn btn-sm btn-primary"
+                    >
+                      Continuar Check-in
+                    </button>
+                  )}
+                  {venda.tipo === 'VENDA' && !venda.deletedAt && venda.status === 'FINALIZADA' && (
                     <button
                       onClick={() => abrirLaudoSaida(venda.id)}
                       className="btn btn-sm"
@@ -2121,7 +2159,11 @@ export function Vendas() {
               Cancelar
             </button>
             <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Salvando...' : form.tipo === 'ORCAMENTO' ? 'Gerar Orcamento' : 'Registrar Venda'}
+              {saving
+                ? 'Salvando...'
+                : form.tipo === 'ORCAMENTO'
+                  ? 'Gerar Orçamento'
+                  : 'Avançar para Check-in'}
             </button>
           </div>
         </form>
@@ -2343,19 +2385,39 @@ export function Vendas() {
             })()}
           </div>
 
+          {/* Documentos da venda (pós check-in) */}
+          {vendaDetalhada?.tipo === 'VENDA' && vendaDetalhada?.status === 'FINALIZADA' && (
+            <div className="mt-3 p-3 bg-zinc-900 border border-zinc-700 rounded-lg">
+              <p className="text-[10px] font-bold tracking-widest text-orange-500 uppercase mb-2">Documentos</p>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={handlePrint} className="text-xs px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg">
+                  Recibo
+                </button>
+                <button
+                  onClick={() => handleLaudoSaida(vendaDetalhada)}
+                  className="text-xs px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg"
+                >
+                  Laudo de Saída
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      await api.post(`/checkin/${vendaDetalhada.id}/reenviar`, {});
+                      alert('Documentos reenviados com sucesso!');
+                    } catch (e: any) { alert(e.message || 'Erro ao reenviar'); }
+                  }}
+                  className="text-xs px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700"
+                >
+                  Reenviar
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2 justify-end border-t border-zinc-700 pt-4">
             <button onClick={() => setViewModalOpen(false)} className="btn btn-secondary">
               Fechar
             </button>
-            {vendaDetalhada?.tipo === 'VENDA' && (
-              <button
-                onClick={() => handleLaudoSaida(vendaDetalhada)}
-                className="btn"
-                style={{ background: '#1d4ed8', color: '#fff' }}
-              >
-                Laudo de Saída
-              </button>
-            )}
             <button onClick={handlePrint} className="btn btn-primary">
               Imprimir
             </button>

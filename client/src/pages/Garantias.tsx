@@ -48,6 +48,16 @@ interface ClienteGrupo {
   garantias: Garantia[];
 }
 
+interface OsVinculada {
+  id: number;
+  numero: string;
+  status: string;
+  valorTotal: number;
+  createdAt: string;
+  cliente: { nome: string };
+  loja: { nomeFantasia: string };
+}
+
 interface ConfirmarRevisaoState {
   garantiaId: number;
   novoValor: boolean;
@@ -55,6 +65,7 @@ interface ConfirmarRevisaoState {
   produto: string;
   chassi: string;
   motor: string;
+  tipoRevisao: string;
 }
 
 export function Garantias() {
@@ -67,6 +78,9 @@ export function Garantias() {
   const [historicoMap, setHistoricoMap] = useState<Record<number, HistoricoVenda[]>>({});
   const [historicoLoading, setHistoricoLoading] = useState<Record<number, boolean>>({});
   const [confirmarRevisao, setConfirmarRevisao] = useState<ConfirmarRevisaoState | null>(null);
+  const [filtroRevisao, setFiltroRevisao] = useState<'todas' | 'pendente' | 'em_dia'>('todas');
+  const [osVinculadasMap, setOsVinculadasMap] = useState<Record<number, OsVinculada[]>>({});
+  const [osVinculadasLoading, setOsVinculadasLoading] = useState<Record<number, boolean>>({});
 
   const loadData = useCallback(() => {
     setLoading(true);
@@ -109,10 +123,16 @@ export function Garantias() {
     }
   }, [historicoMap]);
 
-  const toggleExpandido = (key: string, clienteId: number) => {
+  const toggleExpandido = (key: string, clienteId: number, garantias: Garantia[]) => {
     setExpandidos(prev => {
       const next = new Set(prev);
-      if (next.has(key)) { next.delete(key); } else { next.add(key); loadHistoricoCliente(clienteId); }
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+        loadHistoricoCliente(clienteId);
+        garantias.forEach(g => carregarOsVinculadas(g.id));
+      }
       return next;
     });
   };
@@ -125,7 +145,18 @@ export function Garantias() {
       produto: grupo.produto,
       chassi: grupo.chassi,
       motor: grupo.motor,
+      tipoRevisao: g.tipoGarantia || g.tipo || '',
     });
+  };
+
+  const carregarOsVinculadas = async (garantiaId: number) => {
+    if (osVinculadasMap[garantiaId] !== undefined) return;
+    setOsVinculadasLoading(prev => ({ ...prev, [garantiaId]: true }));
+    try {
+      const data = await api.get<OsVinculada[]>(`/garantias/${garantiaId}/os-vinculadas`);
+      setOsVinculadasMap(prev => ({ ...prev, [garantiaId]: data }));
+    } catch { /* silencioso */ }
+    finally { setOsVinculadasLoading(prev => ({ ...prev, [garantiaId]: false })); }
   };
 
   const confirmarEfetivarRevisao = async () => {
@@ -146,6 +177,17 @@ export function Garantias() {
       loadData();
     } catch (err: any) {
       alert(err.message || 'Erro ao excluir');
+    }
+  };
+
+  const baixarGarantia = async (id: number) => {
+    if (!confirm('Baixar esta garantia? Ela será marcada como inativa/consumida.\n\nAtenção: é necessário ter uma OS de Acionamento de Garantia vinculada.')) return;
+    try {
+      await api.put(`/garantias/${id}/inativar`, {});
+      loadData();
+      alert('Garantia baixada com sucesso.');
+    } catch (err: any) {
+      alert(err.message || 'Erro ao baixar garantia');
     }
   };
 
@@ -186,21 +228,36 @@ export function Garantias() {
     grupo.garantias.push(g);
   }
 
+  // Aplicar filtro por status de revisão
+  const gruposFiltradosPorRevisao = filtroRevisao === 'todas'
+    ? todosGrupos
+    : todosGrupos.filter(gr => {
+        const vencida = primeiraRevisaoVencida(gr);
+        const algumFeita = gr.garantias.some(g => g.revisaoFeita);
+        if (filtroRevisao === 'pendente') return !algumFeita;
+        if (filtroRevisao === 'em_dia') return algumFeita || !vencida;
+        return true;
+      });
+
   // Aplicar busca por texto
   const grupos = buscaGarantia
-    ? todosGrupos.filter(gr => {
+    ? gruposFiltradosPorRevisao.filter(gr => {
         const q = buscaGarantia.toLowerCase();
         const qDigits = buscaGarantia.replace(/\D/g, '');
+        const statusBusca =
+          (gr.garantias.some(g => g.revisaoFeita) ? 'revisão feita' : 'revisão pendente').includes(q) ||
+          (primeiraRevisaoVencida(gr) ? 'vencida suspensa' : '').includes(q);
         return (
           gr.clienteNome.toLowerCase().includes(q) ||
           gr.produto.toLowerCase().includes(q) ||
           gr.chassi.toLowerCase().includes(q) ||
           gr.motor.toLowerCase().includes(q) ||
           (gr.cpfCnpj && qDigits && gr.cpfCnpj.replace(/\D/g, '').includes(qDigits)) ||
-          gr.garantias.some(g => (g.tipoGarantia || g.tipo || '').toLowerCase().includes(q))
+          gr.garantias.some(g => (g.tipoGarantia || g.tipo || '').toLowerCase().includes(q)) ||
+          statusBusca
         );
       })
-    : todosGrupos;
+    : gruposFiltradosPorRevisao;
 
   const ativas = garantiasAtivas.filter(g => calcularDiasRestantes(g.dataFim) > 5).length;
   const vencendo = garantiasAtivas.filter(g => { const d = calcularDiasRestantes(g.dataFim); return d > 0 && d <= 5; }).length;
@@ -220,8 +277,8 @@ export function Garantias() {
         <h1 className="text-2xl font-bold">Garantias</h1>
       </div>
 
-      {/* Cards de filtro */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+      {/* Cards de filtro — por prazo */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
         {[
           { key: 'todas', label: 'Total', count: garantiasAtivas.length, color: '' },
           { key: 'ativas', label: 'Ativas', count: ativas, color: 'text-green-400' },
@@ -234,6 +291,25 @@ export function Garantias() {
             <p className="text-gray-400 text-sm">{f.label}</p>
             <p className={`text-2xl font-bold ${f.color}`}>{f.count}</p>
           </div>
+        ))}
+      </div>
+
+      {/* Filtro por status de revisão */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {[
+          { key: 'todas', label: 'Todas as revisões' },
+          { key: 'pendente', label: 'Revisão pendente', color: 'text-yellow-400' },
+          { key: 'em_dia', label: 'Revisão em dia', color: 'text-green-400' },
+        ].map(f => (
+          <button key={f.key}
+            onClick={() => setFiltroRevisao(f.key as any)}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+              filtroRevisao === f.key
+                ? 'bg-orange-500 border-orange-500 text-white'
+                : 'bg-transparent border-zinc-700 text-zinc-400 hover:border-zinc-500'
+            }`}>
+            {f.label}
+          </button>
         ))}
       </div>
 
@@ -276,7 +352,7 @@ export function Garantias() {
                 status === 'vencendo' ? 'border-yellow-500/30' : ''
               }`}>
                 <div className="flex items-center justify-between cursor-pointer select-none"
-                  onClick={() => toggleExpandido(grupo.key, grupo.clienteId)}>
+                  onClick={() => toggleExpandido(grupo.key, grupo.clienteId, grupo.garantias)}>
                   <div className="flex items-center gap-4">
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                       status === 'expirada' ? 'bg-red-500/20' :
@@ -389,10 +465,18 @@ export function Garantias() {
                                   </button>
                                 </td>
                                 <td className="py-2.5 px-2 text-right">
-                                  <button
-                                    onClick={e => { e.stopPropagation(); excluirGarantia(garantia.id); }}
-                                    className="px-3 py-1 rounded text-xs font-semibold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
-                                  >Excluir</button>
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {garantia.ativa && (
+                                      <button
+                                        onClick={e => { e.stopPropagation(); baixarGarantia(garantia.id); }}
+                                        className="px-3 py-1 rounded text-xs font-semibold bg-orange-500/20 text-orange-400 hover:bg-orange-500/30 transition-colors"
+                                      >Baixar</button>
+                                    )}
+                                    <button
+                                      onClick={e => { e.stopPropagation(); excluirGarantia(garantia.id); }}
+                                      className="px-3 py-1 rounded text-xs font-semibold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors"
+                                    >Excluir</button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -432,6 +516,42 @@ export function Garantias() {
                         </div>
                       )}
                     </div>
+
+                    {/* OS vinculadas à garantia */}
+                    {grupo.garantias.map(g => {
+                      const osVinculadas = osVinculadasMap[g.id];
+                      if (!osVinculadas || osVinculadas.length === 0) return null;
+                      return (
+                        <div key={`os-vinc-${g.id}`} className="mt-4 pt-3 border-t border-zinc-700">
+                          <h4 className="text-xs font-semibold text-purple-400 mb-2 uppercase tracking-wide">
+                            OS Vinculadas — Garantia {g.tipoGarantia || g.tipo}
+                          </h4>
+                          <div className="space-y-1.5">
+                            {osVinculadas.map(os => {
+                              const statusLabel: Record<string, string> = { ORCAMENTO: 'Orçamento', EM_EXECUCAO: 'Em Execução', EXECUTADA: 'Executada' };
+                              const statusColor: Record<string, string> = { ORCAMENTO: 'text-yellow-400', EM_EXECUCAO: 'text-blue-400', EXECUTADA: 'text-green-400' };
+                              return (
+                                <div key={os.id} className="flex items-center justify-between p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-xs">
+                                  <div>
+                                    <span className="font-mono text-zinc-400 mr-2">#{os.numero}</span>
+                                    <span className="text-zinc-200">{os.cliente?.nome}</span>
+                                    <span className="text-zinc-500 ml-2">· {os.loja?.nomeFantasia}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <span className={`font-semibold ${statusColor[os.status] || 'text-zinc-400'}`}>{statusLabel[os.status] || os.status}</span>
+                                    <span className="text-zinc-300">R$ {Number(os.valorTotal).toFixed(2).replace('.', ',')}</span>
+                                    <span className="text-zinc-500">{new Date(os.createdAt).toLocaleDateString('pt-BR')}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {grupo.garantias.some(g => osVinculadasLoading[g.id]) && (
+                      <p className="text-xs text-zinc-500 mt-2 animate-pulse">Buscando OS vinculadas...</p>
+                    )}
 
                     {/* Cronograma de revisões */}
                     <div className="mt-4 pt-3 border-t border-zinc-700">
@@ -496,6 +616,12 @@ export function Garantias() {
                 <div className="flex justify-between"><span className="text-zinc-500">Modelo:</span><span className="text-white">{confirmarRevisao.produto}</span></div>
                 {confirmarRevisao.chassi && <div className="flex justify-between"><span className="text-zinc-500">Chassi:</span><span className="text-white font-mono text-xs">{confirmarRevisao.chassi}</span></div>}
                 {confirmarRevisao.motor && <div className="flex justify-between"><span className="text-zinc-500">Motor:</span><span className="text-white font-mono text-xs">{confirmarRevisao.motor}</span></div>}
+                {confirmarRevisao.tipoRevisao && (
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Tipo de revisão:</span>
+                    <span className="text-white capitalize font-medium">{confirmarRevisao.tipoRevisao}</span>
+                  </div>
+                )}
                 <div className="flex justify-between"><span className="text-zinc-500">Data:</span><span className="text-white">{new Date().toLocaleDateString('pt-BR')}</span></div>
               </div>
               {confirmarRevisao.novoValor && (

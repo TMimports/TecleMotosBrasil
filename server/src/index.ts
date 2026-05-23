@@ -37,6 +37,7 @@ import conciliacaoBancariaRoutes from './routes/conciliacao-bancaria.js';
 import relatoriosRoutes from './routes/relatorios.js';
 import whatsappRoutes from './routes/whatsapp.js';
 import logAtividadesRoutes from './routes/log-atividades.js';
+import checkinRoutes from './routes/checkin.js';
 import { iniciarScheduler } from './services/scheduler.js';
 
 export const prisma = new PrismaClient({
@@ -135,6 +136,7 @@ app.use('/api/notas-fiscais', notasFiscaisRoutes);
 app.use('/api/conciliacao-bancaria', conciliacaoBancariaRoutes);
 app.use('/api/relatorios', relatoriosRoutes);
 app.use('/api/log-atividades', logAtividadesRoutes);
+app.use('/api/checkin', checkinRoutes);
 
 if (isDev) app.get('/api/debug-build', (req, res) => {
   const fs = require('fs');
@@ -272,6 +274,49 @@ async function sincronizarColunas() {
 
     // --- Enum Role: SUPER_ADMIN (usuário oculto de acesso total) ---
     `ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'SUPER_ADMIN' BEFORE 'ADMIN_GERAL'`,
+
+    // --- Check-in / Laudo de Saída ---
+    // 1. status na Venda (vendas existentes ficam FINALIZADA pelo DEFAULT)
+    `ALTER TABLE "Venda" ADD COLUMN IF NOT EXISTS "status" TEXT NOT NULL DEFAULT 'FINALIZADA'`,
+
+    // 2. manualUrl no Produto
+    `ALTER TABLE "Produto" ADD COLUMN IF NOT EXISTS "manualUrl" TEXT`,
+
+    // 3. Tabela VendaCheckin
+    `CREATE TABLE IF NOT EXISTS "VendaCheckin" (
+      "id"                  SERIAL PRIMARY KEY,
+      "vendaId"             INTEGER NOT NULL UNIQUE REFERENCES "Venda"("id") ON DELETE RESTRICT,
+      "numeroSerie"         TEXT NOT NULL,
+      "checklistJson"       TEXT,
+      "quilometragem"       INTEGER,
+      "assinaturaCliente"   TEXT,
+      "assinaturaVendedor"  TEXT,
+      "nomeCliente"         TEXT,
+      "nomeVendedor"        TEXT,
+      "assinadoClienteAt"   TIMESTAMP,
+      "assinadoVendedorAt"  TIMESTAMP,
+      "finalizadoAt"        TIMESTAMP,
+      "createdAt"           TIMESTAMP NOT NULL DEFAULT NOW(),
+      "updatedAt"           TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "VendaCheckin_numeroSerie_key" ON "VendaCheckin"("numeroSerie")`,
+    `ALTER TABLE "VendaCheckin" ADD COLUMN IF NOT EXISTS "assinaturaEntregador" TEXT`,
+    `ALTER TABLE "VendaCheckin" ADD COLUMN IF NOT EXISTS "nomeEntregador" TEXT`,
+
+    // 4. Tabela DocumentoVenda
+    `CREATE TABLE IF NOT EXISTS "DocumentoVenda" (
+      "id"                  SERIAL PRIMARY KEY,
+      "vendaId"             INTEGER NOT NULL REFERENCES "Venda"("id") ON DELETE RESTRICT,
+      "tipo"                TEXT NOT NULL,
+      "numeroSerie"         TEXT NOT NULL,
+      "enviadoEmail"        BOOLEAN NOT NULL DEFAULT FALSE,
+      "enviadoWhatsapp"     BOOLEAN NOT NULL DEFAULT FALSE,
+      "erroEnvioEmail"      TEXT,
+      "erroEnvioWhatsapp"   TEXT,
+      "createdAt"           TIMESTAMP NOT NULL DEFAULT NOW(),
+      "updatedAt"           TIMESTAMP NOT NULL DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS "DocumentoVenda_vendaId_idx" ON "DocumentoVenda"("vendaId")`,
   ];
 
   for (const sql of sqls) {

@@ -205,6 +205,46 @@ router.post('/retroativas', async (req: AuthRequest, res) => {
   }
 });
 
+// PUT /garantias/:id/inativar — baixa/consome garantia; requer OS de acionamento vinculada
+router.put('/:id/inativar', async (req: AuthRequest, res) => {
+  try {
+    const userRole = req.user?.role;
+    if (!['ADMIN_GERAL', 'ADMIN_REDE', 'DONO_LOJA', 'GERENTE_LOJA'].includes(userRole || '')) {
+      return res.status(403).json({ error: 'Sem permissão para baixar garantia' });
+    }
+
+    const garantiaId = Number(req.params.id);
+    const garantia = await prisma.garantia.findUnique({ where: { id: garantiaId } });
+    if (!garantia) return res.status(404).json({ error: 'Garantia não encontrada' });
+    if (!garantia.ativa) return res.status(400).json({ error: 'Garantia já está inativa' });
+
+    // Verificar se existe OS de acionamento vinculada a esta garantia
+    const todasOS = await prisma.ordemServico.findMany({
+      where: { tipo: 'ACIONAMENTO_GARANTIA', deletedAt: null }
+    });
+    const osVinculada = todasOS.find(os => {
+      if (!os.motoDescricao) return false;
+      try { return JSON.parse(os.motoDescricao).garantiaId === garantiaId; } catch { return false; }
+    });
+
+    if (!osVinculada) {
+      return res.status(400).json({
+        error: 'Não é possível baixar esta garantia sem uma Ordem de Serviço de Acionamento de Garantia vinculada. Crie uma OS de Acionamento de Garantia referenciando esta garantia primeiro.'
+      });
+    }
+
+    const atualizada = await prisma.garantia.update({
+      where: { id: garantiaId },
+      data: { ativa: false }
+    });
+
+    res.json(atualizada);
+  } catch (error) {
+    console.error('Erro ao baixar garantia:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
 router.delete('/:id', async (req: AuthRequest, res) => {
   try {
     const userRole = req.user?.role;
@@ -260,6 +300,38 @@ router.post('/', async (req: AuthRequest, res) => {
     res.status(201).json(garantia);
   } catch (error) {
     console.error('Erro ao criar garantia:', error);
+    res.status(500).json({ error: 'Erro interno do servidor' });
+  }
+});
+
+// GET /:id/os-vinculadas — lista OS do tipo ACIONAMENTO_GARANTIA cujo garantiaId está no motoDescricao JSON
+router.get('/:id/os-vinculadas', async (req: AuthRequest, res) => {
+  try {
+    const garantiaId = Number(req.params.id);
+    const filter = applyTenantFilter(req);
+    const where: any = { deletedAt: null, tipo: 'ACIONAMENTO_GARANTIA' };
+    if (filter.lojaId) where.lojaId = filter.lojaId;
+    else if (filter.grupoId) where.loja = { grupoId: filter.grupoId };
+
+    const todas = await prisma.ordemServico.findMany({
+      where,
+      include: { cliente: true, loja: true, itens: { include: { servico: true, produto: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const vinculadas = todas.filter(os => {
+      if (!os.motoDescricao) return false;
+      try {
+        const dados = JSON.parse(os.motoDescricao);
+        return dados.garantiaId === garantiaId;
+      } catch {
+        return false;
+      }
+    });
+
+    res.json(vinculadas);
+  } catch (error) {
+    console.error('Erro ao buscar OS vinculadas:', error);
     res.status(500).json({ error: 'Erro interno do servidor' });
   }
 });

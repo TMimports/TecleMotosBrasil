@@ -8,7 +8,7 @@ const router = Router();
 
 router.use(verifyToken);
 
-async function criarContasReceber(params: {
+export async function criarContasReceber(params: {
   vendaId: number;
   lojaId: number;
   clienteId: number;
@@ -51,7 +51,7 @@ async function criarContasReceber(params: {
   }
 }
 
-async function criarGarantiasVenda(vendaId: number, clienteId: number, itens: any[]) {
+export async function criarGarantiasVenda(vendaId: number, clienteId: number, itens: any[]) {
   for (const item of itens) {
     if (!item.produtoId) continue;
     const produto = item.produto || await prisma.produto.findUnique({ where: { id: item.produtoId } });
@@ -291,16 +291,19 @@ router.post('/', async (req: AuthRequest, res) => {
 
     if (valorTotalManual && Number(valorTotalManual) > 0) {
       valorTotal = Number(valorTotalManual);
-    } else if (valorTotal % 1 !== 0) {
-      valorTotal = Math.ceil(valorTotal);
+    } else {
+      valorTotal = Math.round(valorTotal * 100) / 100;
     }
 
     const tipoVenda = tipo || 'VENDA';
-    const confirmarAutomaticamente = tipoVenda === 'VENDA';
+    // VENDAs entram em PENDENTE_CHECKIN — finalizadas apenas após check-in assinado
+    // Orçamentos ficam FINALIZADA (não precisam de check-in)
+    const statusVenda = tipoVenda === 'VENDA' ? 'PENDENTE_CHECKIN' : 'FINALIZADA';
 
     const venda = await prisma.venda.create({
       data: {
         tipo: tipoVenda,
+        status: statusVenda,
         clienteId: Number(clienteId),
         vendedorId: Number(vendedorId || req.user!.id),
         lojaId: Number(lojaId),
@@ -310,11 +313,11 @@ router.post('/', async (req: AuthRequest, res) => {
         valorTotal,
         observacoes: observacoes?.trim() || null,
         pagamentosJson: pagamentosCompostos ? JSON.stringify(pagamentosCompostos) : null,
-        confirmadaFinanceiro: confirmarAutomaticamente,
+        confirmadaFinanceiro: false,
         createdBy: req.user!.id,
         itens: { create: itensProcessados }
       },
-      include: { 
+      include: {
         itens: { include: { produto: true, servico: true, unidadeFisica: true } },
         cliente: true,
         vendedor: true,
@@ -322,61 +325,7 @@ router.post('/', async (req: AuthRequest, res) => {
       }
     });
 
-    if (confirmarAutomaticamente) {
-      const resultadoBaixa = await InventoryService.processarBaixaVenda(
-        venda.id,
-        itensProcessados.filter(i => i.produtoId).map(i => ({
-          produtoId: i.produtoId!,
-          quantidade: i.quantidade,
-          unidadeFisicaId: i.unidadeFisicaId || undefined
-        })),
-        Number(lojaId),
-        req.user!.id
-      );
-
-      if (!resultadoBaixa.success) {
-        await prisma.venda.delete({ where: { id: venda.id } });
-        return res.status(400).json({ error: resultadoBaixa.error });
-      }
-
-      if (formaPagamento !== 'FINANCIAMENTO') {
-        await prisma.caixa.create({
-          data: {
-            lojaId: Number(lojaId),
-            tipo: 'entrada',
-            descricao: `Venda #${venda.id}`,
-            valor: valorTotal,
-            formaPagamento,
-            referencia: `venda_${venda.id}`
-          }
-        });
-      }
-
-      await criarContasReceber({
-        vendaId: venda.id,
-        lojaId: Number(lojaId),
-        clienteId: Number(clienteId),
-        valorTotal,
-        formaPagamento,
-        parcelas: parcelas ? Number(parcelas) : null,
-        createdBy: req.user!.id
-      });
-
-      const comissaoPercent = Number(config?.comissaoVendedorMoto || 1);
-      const comissaoValor = valorTotal * (comissaoPercent / 100);
-
-      await prisma.comissao.create({
-        data: {
-          usuarioId: Number(vendedorId || req.user!.id),
-          vendaId: venda.id,
-          tipo: 'vendedor',
-          valor: comissaoValor,
-          periodo: config?.periodoComissao || 'MENSAL'
-        }
-      });
-
-      await criarGarantiasVenda(venda.id, Number(clienteId), venda.itens);
-    }
+    // Orçamentos: nada mais a fazer. VENDAs: check-in finaliza o fluxo.
 
     registrarLog({
       usuarioId:  req.user!.id,
@@ -385,7 +334,7 @@ router.post('/', async (req: AuthRequest, res) => {
       acao:       tipoVenda === 'ORCAMENTO' ? 'CRIAR_ORCAMENTO' : 'CRIAR_VENDA',
       entidade:   'VENDA',
       entidadeId: venda.id,
-      detalhes:   `${tipoVenda === 'ORCAMENTO' ? 'Orçamento' : 'Venda'} #${venda.id} criado para "${(venda as any).cliente?.nome || clienteId}" — R$ ${valorTotal.toFixed(2)}`,
+      detalhes:   `${tipoVenda === 'ORCAMENTO' ? 'Orçamento' : 'Venda'} #${venda.id} criado para "${(venda as any).cliente?.nome || clienteId}" — R$ ${valorTotal.toFixed(2)} [${statusVenda}]`,
       ip: obterIp(req),
     });
 
@@ -624,7 +573,8 @@ router.put('/:id/cancelar', requireRole('ADMIN_GERAL', 'GERENTE_LOJA', 'DONO_LOJ
     }
 
     await prisma.$transaction(async (tx) => {
-      if (venda.tipo === 'VENDA') {
+      // Só restaura estoque se a venda estava realmente finalizada (stock foi baixado)
+      if (venda.tipo === 'VENDA' && (venda as any).status === 'FINALIZADA') {
         for (const item of venda.itens) {
           if (item.produtoId) {
             const estoque = await tx.estoque.findUnique({
