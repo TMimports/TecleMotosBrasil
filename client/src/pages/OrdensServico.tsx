@@ -511,44 +511,313 @@ export function OrdensServico() {
   };
 
   const handlePrint = () => {
-    if (!printRef.current) return;
-    
-    const printContent = printRef.current.innerHTML;
+    if (!osDetalhada) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>${osDetalhada?.tipo === 'ORCAMENTO' ? 'Orcamento' : 'Ordem de Servico'} #${osDetalhada?.numero || osDetalhada?.id}</title>
-          <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { font-family: Arial, sans-serif; padding: 20px; color: #333; }
-            .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
-            .header h1 { font-size: 24px; margin-bottom: 5px; }
-            .header p { font-size: 12px; color: #666; }
-            .info-section { display: flex; justify-content: space-between; margin-bottom: 20px; }
-            .info-box { width: 48%; }
-            .info-box h3 { font-size: 14px; border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-bottom: 10px; }
-            .info-box p { font-size: 12px; margin-bottom: 5px; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; font-size: 12px; }
-            th { background: #f5f5f5; }
-            .total { text-align: right; font-size: 16px; font-weight: bold; }
-            .obs { margin-top: 20px; padding: 10px; background: #f9f9f9; border: 1px solid #ccc; font-size: 12px; }
-            .footer { margin-top: 40px; text-align: center; font-size: 10px; color: #666; }
-            .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; }
-            .badge-orcamento { background: #fef3c7; color: #92400e; }
-            .badge-os { background: #dbeafe; color: #1e40af; }
-            @media print { body { padding: 0; } }
-          </style>
-        </head>
-        <body>
-          ${printContent}
-        </body>
-      </html>
-    `);
+    let motoInfo: any = {};
+    if (osDetalhada.motoDescricao) {
+      try { motoInfo = JSON.parse(osDetalhada.motoDescricao); } catch { motoInfo = {}; }
+    }
+    let obsTexto = '';
+    if (osDetalhada.observacoes) {
+      try { const p = JSON.parse(osDetalhada.observacoes); obsTexto = p.texto || ''; } catch { obsTexto = osDetalhada.observacoes; }
+    }
+
+    const lojaEnd = osDetalhada.loja?.endereco || 'Estrada dos Bandeirantes, 5222 - Recreio dos Bandeirantes, Rio de Janeiro - RJ';
+    const lojaTel = osDetalhada.loja?.telefone || '(21) 99019-2384';
+    const dataFormatada = osDetalhada.createdAt
+      ? new Date(osDetalhada.createdAt).toLocaleDateString('pt-BR')
+      : new Date().toLocaleDateString('pt-BR');
+
+    const itensCobrados = (osDetalhada.itens || []).filter(i => !(i.produto && i.cobrada === false));
+    const itensRows = itensCobrados.map(item => {
+      const nome = item.servico?.nome || item.produto?.nome || 'Não informado';
+      const qtd = item.quantidade;
+      const unit = Number(item.precoUnitario).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const total = (Math.round(Number(item.precoUnitario) * qtd * 100) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      return `<tr><td>${qtd}</td><td>${nome}</td><td>R$ ${unit}</td><td>R$ ${total}</td></tr>`;
+    }).join('');
+
+    const totalFormatado = Number(osDetalhada.valorTotal || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const tipoDoc = osDetalhada.tipo === 'ORCAMENTO' ? 'ORÇAMENTO' : 'ORDEM DE SERVIÇO';
+    const numDoc = osDetalhada.numero || String(osDetalhada.id);
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>${tipoDoc} #${numDoc}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #333; padding: 20mm 15mm; }
+    .empresa-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #333; padding-bottom: 10px; margin-bottom: 12px; }
+    .empresa-nome { font-size: 22px; font-weight: bold; letter-spacing: 1px; }
+    .empresa-slogan { font-size: 10px; color: #555; margin-top: 2px; }
+    .empresa-servicos { font-size: 10px; color: #555; margin-top: 4px; }
+    .empresa-contato { text-align: right; font-size: 11px; line-height: 1.6; }
+    .doc-titulo { text-align: center; margin: 14px 0 10px; }
+    .doc-titulo h2 { font-size: 16px; font-weight: bold; border: 2px solid #333; display: inline-block; padding: 4px 24px; letter-spacing: 2px; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .info-box { border: 1px solid #ccc; padding: 8px; }
+    .info-box h4 { font-size: 11px; font-weight: bold; text-transform: uppercase; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-bottom: 6px; color: #444; }
+    .info-box p { margin-bottom: 3px; line-height: 1.4; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    thead tr { background: #333; color: #fff; }
+    th { padding: 7px 8px; text-align: left; font-size: 11px; }
+    td { padding: 6px 8px; border-bottom: 1px solid #ddd; font-size: 11px; }
+    tbody tr:nth-child(even) { background: #f9f9f9; }
+    .total-box { text-align: right; border-top: 2px solid #333; padding-top: 8px; margin-bottom: 20px; }
+    .total-box span { font-size: 14px; font-weight: bold; }
+    .obs-box { border: 1px solid #ccc; padding: 8px; margin-bottom: 16px; font-size: 11px; }
+    .obs-box h4 { font-size: 11px; font-weight: bold; margin-bottom: 4px; }
+    .rodape { margin-top: 30px; border-top: 1px solid #ccc; padding-top: 16px; }
+    .rodape-texto { font-size: 10px; color: #555; text-align: center; margin-bottom: 24px; }
+    .assinatura-linha { display: flex; justify-content: space-between; margin-top: 20px; }
+    .assinatura-item { width: 45%; text-align: center; }
+    .assinatura-item .linha { border-top: 1px solid #333; margin-bottom: 4px; }
+    .assinatura-item p { font-size: 10px; color: #555; }
+    @media print { body { padding: 10mm; } }
+  </style>
+</head>
+<body>
+  <div class="empresa-header">
+    <div>
+      <div class="empresa-nome">TECLE MOTOS</div>
+      <div class="empresa-slogan">Eletrônica &bull; Motos &bull; Assistência Técnica</div>
+      <div class="empresa-servicos">Manutenção | Instalação | Vendas | Assistência Técnica | Serviços Especializados</div>
+    </div>
+    <div class="empresa-contato">
+      <div>${lojaEnd}</div>
+      <div>E-mail: teclemotos.recreio@gmail.com</div>
+      <div>Fone: ${lojaTel}</div>
+    </div>
+  </div>
+
+  <div class="doc-titulo">
+    <h2>${tipoDoc} Nº ${numDoc}</h2>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-box">
+      <h4>Dados do Cliente</h4>
+      <p><strong>Nome:</strong> ${osDetalhada.cliente?.nome || 'Não informado'}</p>
+      ${osDetalhada.cliente?.cpfCnpj ? `<p><strong>CPF/CNPJ:</strong> ${osDetalhada.cliente.cpfCnpj}</p>` : ''}
+      ${osDetalhada.cliente?.telefone ? `<p><strong>Telefone:</strong> ${osDetalhada.cliente.telefone}</p>` : ''}
+      ${osDetalhada.cliente?.endereco ? `<p><strong>Endereço:</strong> ${osDetalhada.cliente.endereco}</p>` : ''}
+    </div>
+    <div class="info-box">
+      <h4>Dados do Veículo / OS</h4>
+      <p><strong>Data:</strong> ${dataFormatada}</p>
+      ${osDetalhada.tecnico ? `<p><strong>Técnico:</strong> ${osDetalhada.tecnico}</p>` : ''}
+      ${motoInfo.modelo ? `<p><strong>Modelo:</strong> ${motoInfo.modelo}</p>` : ''}
+      ${motoInfo.chassi ? `<p><strong>Chassi:</strong> ${motoInfo.chassi}</p>` : ''}
+      ${motoInfo.motor ? `<p><strong>Motor:</strong> ${motoInfo.motor}</p>` : ''}
+      ${motoInfo.descricao ? `<p><strong>Descrição:</strong> ${motoInfo.descricao}</p>` : ''}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:60px">Quantidade</th>
+        <th>Descrição</th>
+        <th style="width:110px">Preço Unit.</th>
+        <th style="width:110px">Valor Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itensRows || '<tr><td colspan="4" style="text-align:center;color:#999">Nenhum item</td></tr>'}
+    </tbody>
+  </table>
+
+  <div class="total-box">
+    <span>Total da Nota: R$ ${totalFormatado}</span>
+  </div>
+
+  ${obsTexto ? `<div class="obs-box"><h4>Observações</h4><p>${obsTexto}</p></div>` : ''}
+
+  <div class="rodape">
+    <div class="rodape-texto">
+      "Concordo com os lançamentos descritos referentes à presente Ordem de Serviço."
+    </div>
+    <div class="assinatura-linha">
+      <div class="assinatura-item">
+        <div class="linha"></div>
+        <p>Data: _____ / _____ / _______</p>
+      </div>
+      <div class="assinatura-item">
+        <div class="linha"></div>
+        <p>Assinatura do Cliente</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
+  const handlePrintLaudoEntrada = () => {
+    if (!osDetalhada) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    let motoInfo: any = {};
+    if (osDetalhada.motoDescricao) {
+      try { motoInfo = JSON.parse(osDetalhada.motoDescricao); } catch { motoInfo = {}; }
+    }
+
+    const lojaEnd = osDetalhada.loja?.endereco || 'Estrada dos Bandeirantes, 5222 - Recreio dos Bandeirantes, Rio de Janeiro - RJ';
+    const lojaTel = osDetalhada.loja?.telefone || '(21) 99019-2384';
+    const numOS = osDetalhada.numero || String(osDetalhada.id);
+
+    const checklistItens = [
+      'Buzina', 'Retrovisores', 'Setas', 'Acelerador', 'Painel / Indicadores',
+      'Freios', 'Parafusos / Fixações', 'Bateria', 'Carregador', 'Rodas / Pneus',
+      'Corrente / Transmissão', 'Suspensão', 'Pedaleiras', 'Banco', 'Encosto',
+      'Alarme', 'Pisca-alerta', 'Luzes (Farol / Lanterna)', 'Outros'
+    ];
+
+    const checkRows = checklistItens.map(item => `
+      <tr>
+        <td>${item}</td>
+        <td><label><input type="checkbox"> Bom</label> &nbsp; <label><input type="checkbox"> Ruim</label></td>
+        <td><label><input type="checkbox"> Bom</label> &nbsp; <label><input type="checkbox"> Ruim</label></td>
+        <td style="min-width:140px"></td>
+      </tr>`).join('');
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Laudo de Entrada na Oficina - OS #${numOS}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 11px; color: #333; padding: 15mm 12mm; }
+    .empresa-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #333; padding-bottom: 8px; margin-bottom: 10px; }
+    .empresa-nome { font-size: 20px; font-weight: bold; letter-spacing: 1px; }
+    .empresa-slogan { font-size: 10px; color: #555; margin-top: 2px; }
+    .empresa-contato { text-align: right; font-size: 10px; line-height: 1.6; }
+    .doc-titulo { text-align: center; margin: 10px 0 8px; }
+    .doc-titulo h2 { font-size: 15px; font-weight: bold; border: 2px solid #333; display: inline-block; padding: 4px 20px; letter-spacing: 2px; }
+    .doc-titulo p { font-size: 10px; color: #555; margin-top: 3px; }
+    .section-title { font-size: 11px; font-weight: bold; text-transform: uppercase; background: #eee; padding: 4px 8px; border: 1px solid #ccc; border-bottom: none; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+    .info-box { border: 1px solid #ccc; }
+    .info-box-inner { padding: 7px 8px; }
+    .info-box p { margin-bottom: 4px; padding: 2px 0; border-bottom: 1px dotted #ddd; line-height: 1.5; }
+    .info-box p:last-child { border-bottom: none; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 10px; }
+    th { background: #333; color: #fff; padding: 5px 6px; text-align: center; font-size: 10px; }
+    th.left { text-align: left; }
+    td { padding: 4px 6px; border: 1px solid #ccc; vertical-align: middle; }
+    td.item-nome { font-weight: 500; }
+    .obs-box { border: 1px solid #ccc; padding: 8px; margin-bottom: 10px; min-height: 50px; }
+    .obs-box h4 { font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 6px; color: #444; }
+    .aviso-box { border: 1px solid #aaa; background: #fff8e1; padding: 8px; margin-bottom: 14px; font-size: 10px; }
+    .assinatura-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 10px; }
+    .assinatura-item { text-align: center; }
+    .assinatura-item .linha { border-top: 1px solid #333; margin-bottom: 4px; }
+    .assinatura-item p { font-size: 10px; color: #555; line-height: 1.6; }
+    .datas-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+    .data-box { border: 1px solid #ccc; padding: 6px 8px; }
+    .data-box h4 { font-size: 10px; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; }
+    @media print {
+      body { padding: 8mm; }
+      input[type="checkbox"] { print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+  <div class="empresa-header">
+    <div>
+      <div class="empresa-nome">TECLE MOTOS</div>
+      <div class="empresa-slogan">Eletrônica &bull; Motos &bull; Assistência Técnica</div>
+    </div>
+    <div class="empresa-contato">
+      <div>${lojaEnd}</div>
+      <div>E-mail: teclemotos.recreio@gmail.com</div>
+      <div>Fone: ${lojaTel}</div>
+    </div>
+  </div>
+
+  <div class="doc-titulo">
+    <h2>LAUDO DE ENTRADA NA OFICINA</h2>
+    <p>OS Nº ${numOS}</p>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="section-title">Dados do Cliente</div>
+      <div class="info-box-inner">
+        <p><strong>Nome/Razão Social:</strong> ${osDetalhada.cliente?.nome || '&nbsp;'}</p>
+        <p><strong>Telefone:</strong> ${osDetalhada.cliente?.telefone || '&nbsp;'}</p>
+        <p><strong>CPF/CNPJ:</strong> ${osDetalhada.cliente?.cpfCnpj || '&nbsp;'}</p>
+        <p><strong>Endereço:</strong> ${osDetalhada.cliente?.endereco || '&nbsp;'}</p>
+      </div>
+    </div>
+    <div class="info-box">
+      <div class="section-title">Dados da Moto</div>
+      <div class="info-box-inner">
+        <p><strong>Modelo:</strong> ${motoInfo.modelo || '&nbsp;'}</p>
+        <p><strong>Chassi:</strong> ${motoInfo.chassi || '&nbsp;'}</p>
+        <p><strong>Cor:</strong> ${motoInfo.descricao || '&nbsp;'}</p>
+        <p><strong>Km Entrada:</strong> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<strong>Km Saída:</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title" style="margin-bottom:0">Checklist de Itens</div>
+  <table>
+    <thead>
+      <tr>
+        <th class="left" style="width:30%">Item</th>
+        <th style="width:22%">Entrada</th>
+        <th style="width:22%">Saída</th>
+        <th style="width:26%">Observações</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${checkRows}
+    </tbody>
+  </table>
+
+  <div class="obs-box">
+    <h4>Observações Gerais</h4>
+    <p style="color:#999;border:none;padding:0">&nbsp;</p>
+    <p style="color:#999;border:none;padding:0">&nbsp;</p>
+  </div>
+
+  <div class="datas-grid">
+    <div class="data-box">
+      <h4>Data / Hora de Entrada</h4>
+      <p>_____ / _____ / _______&nbsp;&nbsp;&nbsp;_____ : _____</p>
+    </div>
+    <div class="data-box">
+      <h4>Data / Hora de Retirada</h4>
+      <p>_____ / _____ / _______&nbsp;&nbsp;&nbsp;_____ : _____</p>
+    </div>
+  </div>
+
+  <div class="aviso-box">
+    <strong>ATENÇÃO:</strong> Após 72 (setenta e duas) horas da entrada do veículo na oficina, será cobrada taxa de permanência no valor de <strong>R$ 25,00</strong> por dia ou fração.
+  </div>
+
+  <div class="assinatura-grid">
+    <div class="assinatura-item">
+      <div class="linha"></div>
+      <p><strong>Assinatura do Cliente na Entrega</strong></p>
+      <p>Data: _____ / _____ / _______</p>
+    </div>
+    <div class="assinatura-item">
+      <div class="linha"></div>
+      <p><strong>Assinatura do Cliente na Retirada</strong></p>
+      <p>Data: _____ / _____ / _______</p>
+    </div>
+  </div>
+</body>
+</html>`);
     printWindow.document.close();
     printWindow.print();
   };
@@ -1481,12 +1750,15 @@ export function OrdensServico() {
             })()}
           </div>
 
-          <div className="flex gap-2 justify-end border-t border-zinc-700 pt-4">
+          <div className="flex gap-2 justify-end border-t border-zinc-700 pt-4 flex-wrap">
             <button onClick={() => setViewModalOpen(false)} className="btn btn-secondary">
               Fechar
             </button>
+            <button onClick={handlePrintLaudoEntrada} className="btn btn-secondary">
+              Laudo de Entrada
+            </button>
             <button onClick={handlePrint} className="btn btn-primary">
-              Imprimir
+              Imprimir OS
             </button>
           </div>
         </div>
